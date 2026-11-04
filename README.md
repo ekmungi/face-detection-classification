@@ -17,7 +17,7 @@ see it, and the same alignment code runs in training and in the pipeline.
 | Model | Test | Result |
 |---|---|---|
 | Detector | WIDER FACE validation, AP at IoU 0.5 with the official easy / medium / hard face lists (VOC-style) | 0.857 / 0.845 / 0.753 |
-| Expression | EmoNet-Face Binary held-out portraits (318, grouped by prompt) | accuracy 0.849, macro-F1 0.663 |
+| Expression | EmoNet-Face Binary held-out portraits (318, grouped by prompt) | accuracy 0.849, macro-F1 0.662 |
 | Identity | 500 unseen DigiFace identities, 36,000 images | AUC 0.997, TAR 0.920 at FAR 1e-3, rank-1 0.938 |
 
 Known limits: the detector misses many faces that fill the whole frame; the expression model was trained on
