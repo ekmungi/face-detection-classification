@@ -22,6 +22,8 @@ if any("papermill" in line and f"RUN_ID {run_id}" in line for line in listing.sp
     sys.exit(0)
 
 sys.path.insert(0, str(REPO))
+import importlib  # noqa: E402
+importlib.invalidate_caches()   # the kernel may have looked for the clone before it existed
 import paths  # noqa: E402
 
 run = paths.run_dir(exp, run_id)
