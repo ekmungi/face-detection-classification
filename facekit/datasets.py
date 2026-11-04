@@ -361,6 +361,8 @@ def fetch_all(
     sources: Iterable[Source],
     root: str | Path,
     *,
+    extract_root: str | Path | None = None,
+    local_names: Iterable[str] = (),
     workers: int = 6,
     retries: int = 4,
     report_every: float = 30.0,
@@ -370,17 +372,26 @@ def fetch_all(
 ) -> list[dict[str, Any]]:
     """Downloads and unpacks every source in parallel for the notebook's data cell, and reports as it goes.
 
+    Downloaded files live in `root` (on Colab, the artifacts folder's data/raw in Google Drive, so a file downloaded
+    once is found there by every later machine), and archives are unpacked into `extract_root` (the machine's own
+    disk; `root` when not given). Sources named in `local_names` are downloaded into `extract_root` instead, so their
+    files never reach `root`. A complete file already in place is not downloaded again.
+
     It logs one line for each source as soon as that source is done, in the order they finish, and every
     `report_every` seconds a progress line that names what is still running and how many gigabytes are on disk.
     It waits in steps of `poll` seconds, so an interrupt (Ctrl+C, or the notebook's stop button) reaches it at
     once. It then sets the stop signal, waits for the downloads to end, keeps every finished file and raises
     KeyboardInterrupt; running it again skips the finished downloads. A failed download stops the others the same
-    way and raises its error. Returns one record per source, in the order given: name, size in bytes, files
-    extracted and seconds.
+    way and raises its error. Returns one record per source, in the order given: name, path of the file, size in
+    bytes, files extracted, seconds, and whether it was downloaded or already there.
     """
     root_path = Path(root)
     root_path.mkdir(parents=True, exist_ok=True)
+    unpack_path = Path(extract_root) if extract_root is not None else root_path
+    unpack_path.mkdir(parents=True, exist_ok=True)
+    local = set(local_names)
     source_list = list(sources)
+    folder_of = {source.name: unpack_path if source.name in local else root_path for source in source_list}
     download_fn = download_fn or download
     stop = threading.Event()
     state: dict[str, str] = {source.name: "queued" for source in source_list}
@@ -388,20 +399,22 @@ def fetch_all(
 
     def one(source: Source) -> dict[str, Any]:
         started = time.monotonic()
-        state[source.name] = "downloading"
-        path = download_fn(source, root_path, retries=retries, stop=stop)
+        folder = folder_of[source.name]
+        origin = "already there" if _matches_expected(folder / source.filename, source) else "downloaded"
+        state[source.name] = "checking" if origin == "already there" else "downloading"
+        path = download_fn(source, folder, retries=retries, stop=stop)
         extracted = 0
         if _is_archive_name(path.name):
             state[source.name] = "unpacking"
-            extracted = len(safe_extract(path, root_path / source.name, stop=stop))
+            extracted = len(safe_extract(path, unpack_path / source.name, stop=stop))
         state[source.name] = "done"
-        return {"name": source.name, "size": path.stat().st_size, "extracted": extracted,
-                "seconds": round(time.monotonic() - started, 1)}
+        return {"name": source.name, "path": str(path), "size": path.stat().st_size, "extracted": extracted,
+                "seconds": round(time.monotonic() - started, 1), "origin": origin}
 
     pool = ThreadPoolExecutor(max_workers=max(1, workers))
     pending = {pool.submit(one, source) for source in source_list}
     started = last_report = time.monotonic()
-    last_bytes = _bytes_on_disk(source_list, root_path)
+    last_bytes = sum(_bytes_on_disk([x], folder_of[x.name]) for x in source_list)
     try:
         while pending:
             done, pending = wait(pending, timeout=poll, return_when=FIRST_COMPLETED)
@@ -409,12 +422,12 @@ def fetch_all(
                 record = future.result()
                 results[record["name"]] = record
                 log(f"{record['name']:22s} {record['size'] / 1e9:6.2f} GB  extracted {record['extracted']:7d} files  "
-                    f"{record['seconds']:6.1f} s")
+                    f"{record['seconds']:6.1f} s  {record['origin']}")
             now = time.monotonic()
             if pending and now - last_report >= report_every:
-                on_disk = _bytes_on_disk(source_list, root_path)
+                on_disk = sum(_bytes_on_disk([x], folder_of[x.name]) for x in source_list)
                 rate = (on_disk - last_bytes) / max(now - last_report, 1e-9) / 1e6
-                working = ", ".join(f"{name} ({how})" for name, how in state.items() if how in ("downloading", "unpacking"))
+                working = ", ".join(f"{name} ({how})" for name, how in state.items() if how not in ("queued", "done"))
                 log(f"[{(now - started) / 60:4.1f} min] {len(results)} of {len(source_list)} done; still working on "
                     f"{working or 'queued downloads'}; {on_disk / 1e9:.2f} GB so far, {rate:.1f} MB/s")
                 last_report, last_bytes = now, on_disk

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.4 - 2026-11-04
+
+- The downloaded dataset files can live in Google Drive. With the new `USE_DRIVE` parameter (on by default), the
+  data cell mounts Drive and keeps the files in the artifacts folder's `data/raw`, so each one is downloaded only
+  once; a file already there is not downloaded again. The archives are still unpacked onto the machine's own disk,
+  and the Face Research Lab London Set stays on the machine. `datasets.fetch_all` takes `extract_root` and
+  `local_names` for this, and reports each file as downloaded or already there. `tools/colab_launch.py` turns
+  Drive off, because an unattended run cannot approve the Drive page.
+- A figure of how the models feed each other now follows the notebook's introduction, with a table of each block's
+  model, input and output. It is kept as a PNG with its source in `docs/figures/`, and a copy is embedded in the
+  notebook cell; a test fails when the two copies differ. The pre-commit hook now allows PNGs in `docs/figures/`,
+  as `.gitignore` already did.
+
 ## 0.2.3 - 2026-11-04
 
 - The notebook's download cell no longer looks frozen and no longer hangs the kernel when it is stopped.

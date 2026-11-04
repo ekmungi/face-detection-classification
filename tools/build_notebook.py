@@ -9,8 +9,17 @@ import nbformat as nbf
 CELLS: list[tuple[str, str]] = []
 
 
-def md(text):
-    CELLS.append(("markdown", text.strip("\n")))
+def md(text, attachments=None):
+    CELLS.append(("markdown", text.strip("\n"), attachments or {}))
+
+
+def png_attachment(path: Path) -> dict:
+    """A markdown-cell attachment holding a PNG, so the picture travels inside the notebook file."""
+    import base64
+    return {path.name: {"image/png": base64.b64encode(path.read_bytes()).decode("ascii")}}
+
+
+FIGURES = Path(__file__).resolve().parent.parent / "docs" / "figures"
 
 
 def code(text, tags=None):
@@ -32,9 +41,27 @@ No network that was already trained on faces is used. Every dataset and its lice
 """)
 
 md("""
+## How the pipeline fits together
+
+![The face pipeline: a photo goes through the detector and the alignment step, then the expression model and the identity model, whose embedding is matched against the gallery](attachment:pipeline_flow.png)
+
+The figure shows what happens to one photo once the models are trained, when the finished pipeline runs on a laptop or a GPU. The detector finds each face and its five landmarks. The alignment step uses those landmarks to cut two upright crops of the face. The larger crop goes to the expression model and the smaller one to the identity model, whose embedding is compared with the people enrolled in the gallery. Boxes with a white fill are the three trained networks, which this notebook trains, and grey boxes are fixed calculations with no trained weights. The figure's source and a PNG copy are in `docs/figures/`.
+
+| Block | Model | Input | Output |
+|---|---|---|---|
+| 1. Detector | CenterFace-style network on a ResNet-18 backbone, 11.5 million weights | the photo, shrunk so its longest side is at most 1,280 pixels | for each face, a box, five landmarks (eyes, nose tip, mouth corners) and a confidence score; faces below the score threshold (0.32 in the current models) or smaller than 16 pixels are dropped |
+| 2. Alignment | none: a rotation and scaling | the photo and each face's five landmarks | an upright crop of each face at 224 by 224 and at 112 by 112 pixels |
+| 3. Expression | ConvNeXt-Tiny, 27.8 million weights | the 224 by 224 crop | eight probabilities: neutral, happy, sad, surprise, fear, disgust, anger and contempt |
+| 4. Identity | IResNet-50, 43.6 million weights | the 112 by 112 crop and its mirror image | an embedding of 512 numbers |
+| 5. Gallery match | none: a comparison | the embedding | the closest enrolled person's name when the cosine similarity reaches the threshold (0.52 in the current models), otherwise "unknown" |
+
+Sections 3 to 9 prepare the data, train the three networks and test them. Section 10 exports them to ONNX files, and section 11 runs this whole pipeline on photos. The 0.52 naming threshold was set on synthetic faces, and on real faces it gave a name to 98% of strangers, so it needs recalibrating before any name is trusted.
+""", attachments=png_attachment(FIGURES / "pipeline_flow.png"))
+
+md("""
 ## Parameters
 
-The next cell holds the six settings of a run. `MODE` chooses smoke or full. `EXP` and `RUN_ID` name the folder the results go into, for example `scratch/smoke-001` for a smoke run or `exp-001/run-003` for the real run that produced the current models. The three budgets set how many minutes each training is planned to take. Each training measures its own speed first and plans its epochs, the full passes over its training data, to fit its budget. The detector and identity trainings stop at their budgets, and the expression training may run up to 1.3 times its budget. Papermill is a tool that runs a notebook from top to bottom as an ordinary program. When it runs this notebook unattended, it finds this cell by its tag `parameters` and replaces these values. To run the notebook by hand, change `MODE` here before you start. For a full run, also give `EXP` and `RUN_ID` new values, such as `exp-001` and `run-004`, so that the run writes into its own folder and does not reuse the plans of an earlier run.
+The next cell holds the seven settings of a run. `MODE` chooses smoke or full. `EXP` and `RUN_ID` name the folder the results go into, for example `scratch/smoke-001` for a smoke run or `exp-001/run-003` for the real run that produced the current models. The three budgets set how many minutes each training is planned to take. Each training measures its own speed first and plans its epochs, the full passes over its training data, to fit its budget. The detector and identity trainings stop at their budgets, and the expression training may run up to 1.3 times its budget. `USE_DRIVE` keeps the downloaded files in Google Drive, so that they are downloaded only once (section 2). Papermill is a tool that runs a notebook from top to bottom as an ordinary program. When it runs this notebook unattended, it finds this cell by its tag `parameters` and replaces these values. To run the notebook by hand, change `MODE` here before you start. For a full run, also give `EXP` and `RUN_ID` new values, such as `exp-001` and `run-004`, so that the run writes into its own folder and does not reuse the plans of an earlier run.
 """)
 code("""
 # Parameters (papermill overrides these).
@@ -44,6 +71,7 @@ RUN_ID = "smoke-001"      # run-NNN or smoke-NNN
 DET_BUDGET_MIN = 50.0     # minutes for detector training
 ID_BUDGET_MIN = 55.0      # minutes for identity training (a second process on the same GPU)
 EXPR_BUDGET_MIN = 12.0    # minutes for expression training
+USE_DRIVE = True          # keep the downloaded files in Google Drive (Colab asks you to approve it once)
 """, tags=["parameters"])
 
 md("""
@@ -150,7 +178,7 @@ SUMMARY["config"] = CFG
 md("""
 ## 2. Data: download every dataset and record its licence
 
-**Download and unpack the datasets.** This cell downloads every file the run needs, up to six at a time. It checks each file's size where the project records it, tries each download up to four times in total, and unpacks the zip archives into `/content/data/raw` on the machine's own disk. That folder is never synced to Google Drive, so no dataset is copied anywhere else. Smoke mode still downloads about 8.7 GB, because WIDER FACE and each DigiFace part come as single large archives. Microsoft's DigiFace server is slow, about 5 MB/s for each file, and a smoke run on an L4 took 763 seconds for this cell. The cell prints a line for each dataset as soon as it is done. Every 30 seconds it also prints a progress line that names what is still downloading or unpacking, how many gigabytes have arrived and the current speed, so a long wait shows steady progress. If you stop the cell, it ends within a few seconds, keeps every finished download and says how many are complete, and running the cell again continues with the rest. The cell then writes `data_manifest.json`, which lists every source with its address, its licence and the number of images unpacked from each archive, and it prints the licence of each source. The parquet and text files are recorded with a count of zero, because they are not unpacked. A good result is a line for every dataset with a size above zero. The Face Research Lab London Set is downloaded only for one expression check in section 8, and this notebook never uses it to identify anyone.
+**Get and unpack the datasets.** On Colab with `USE_DRIVE = True`, this cell first mounts Google Drive, which shows a Google page that you must approve within two minutes. The downloaded files then live in the artifacts folder's `data/raw` in Drive, so a file downloaded once is found there by every later machine and is not downloaded again. Each file that is missing is downloaded straight into that folder, up to six at a time. The cell checks each file's size where the project records it and tries each download up to four times in total. The zip archives are unpacked onto the machine's own disk, in `/content/data/raw`, because unpacking the 288,000 DigiFace images into Drive would be slow and would sync them to the laptop. The Face Research Lab London Set is downloaded onto the machine only and never goes to Drive. If Drive is not mounted, as in an unattended run, every file is downloaded onto the machine. Smoke mode needs about 8.7 GB of files. Downloading them takes about 13 minutes, because Microsoft's DigiFace server is slow, about 5 MB/s for each file, while reading them from Drive is several times faster. The cell prints where the files live and where they are unpacked, then a line for each dataset as soon as it is done, saying whether it was downloaded or already there. Every 30 seconds it also prints a progress line that names what is still downloading or unpacking, how many gigabytes have arrived and the current speed, so a long wait shows steady progress. If you stop the cell, it ends within a few seconds, keeps every finished download and says how many are complete, and running the cell again continues with the rest. The cell then writes `data_manifest.json`, which lists every source with its address, its licence and the number of images unpacked from each archive, and it prints the licence of each source. The parquet and text files are recorded with a count of zero, because they are not unpacked. A good result is a line for every dataset with a size above zero. The Face Research Lab London Set is downloaded only for one expression check in section 8, and this notebook never uses it to identify anyone.
 """)
 code("""
 LONDON = [sources.LONDON_NEUTRAL, sources.LONDON_SMILING]
@@ -162,8 +190,27 @@ WANTED = ([sources.WIDER_TRAIN, sources.RETINAFACE_LABELS, sources.WIDER_VAL, WI
 
 # Six downloads at a time. A line appears as each dataset finishes and a progress line every 30 seconds. The stop
 # button ends the cell within seconds: finished downloads are kept, and running the cell again continues.
+# Where the downloaded files live. On Colab with USE_DRIVE, that is the artifacts folder's data/raw in Google Drive,
+# so a file downloaded once is there for every later machine. Archives are unpacked onto this machine's own disk
+# (RAW), and the London photos never leave this machine.
+ARCHIVES = RAW
+if os.path.isdir("/content") and USE_DRIVE:
+    try:
+        from google.colab import drive
+        drive.mount("/content/drive")            # approve the Google page within two minutes
+        found = paths.drive_artifacts_dir()
+        if found is not None:
+            ARCHIVES = found / "data" / "raw"
+            ARCHIVES.mkdir(parents=True, exist_ok=True)
+    except Exception as error:                   # no approval, or the folder is not in Drive: use this machine
+        print("Google Drive is not used, so the files are downloaded onto this machine:", error)
+        ARCHIVES = RAW
+print("downloaded files:", ARCHIVES)
+print("unpacked folders:", RAW)
 started = time.time()
-fetched = datasets.fetch_all(WANTED, RAW, workers=6, retries=4, report_every=30)
+fetched = datasets.fetch_all(WANTED, ARCHIVES, extract_root=RAW, local_names={s.name for s in LONDON},
+                             workers=6, retries=4, report_every=30)
+FILES = {record["name"]: Path(record["path"]) for record in fetched}
 print(f"all downloads and extractions: {time.time() - started:.0f} s")
 manifest = datasets.write_manifest(RUN / "data_manifest.json", WANTED, {s.name: datasets.count_images(RAW / s.name) for s in WANTED})
 print(f"{'dataset':22s} licence"); [print(f"{s['name']:22s} {s['licence']}") for s in manifest["sources"]]
@@ -178,7 +225,7 @@ code("""
 split_dir = next((RAW / "wider_split").rglob("wider_face_train_bbx_gt.txt")).parent
 official_train = {Path(r["path"]).name: r for r in parse_wider_official(split_dir / "wider_face_train_bbx_gt.txt")}
 official_val = {Path(r["path"]).name: r for r in parse_wider_official(split_dir / "wider_face_val_bbx_gt.txt")}
-retina = parse_retinaface_labels(RAW / sources.RETINAFACE_LABELS.filename)
+retina = parse_retinaface_labels(FILES["retinaface_labels"])
 
 def boxes_match(a, b, tol=1.0):
     a = np.asarray(a).reshape(-1, 4); b = np.asarray(b).reshape(-1, 4)
@@ -190,7 +237,7 @@ matched = sum(boxes_match(r["boxes"], official_train[Path(r["path"]).name]["boxe
 share = matched / max(1, len(retina))
 check("RetinaFace labels agree with official WIDER train boxes", share >= 0.97, f"{matched}/{len(retina)} images ({share:.1%})")
 n_val_checked = n_val_ok = 0
-for rec in prepare.wider_val_records(RAW / sources.WIDER_VAL.filename, max_items=400):
+for rec in prepare.wider_val_records(FILES["wider_val"], max_items=400):
     key = Path(rec["path"]).name
     if key in official_val:
         n_val_checked += 1; n_val_ok += boxes_match(rec["boxes"], official_val[key]["boxes"])
@@ -411,7 +458,7 @@ print(f"landmark error (NME, normalised by box size) on held-out training images
 preds, truths, examples, demo_images = [], [], [], []
 t0 = time.time()
 keep_in_range, keep_has_zero = True, False
-for n, rec in enumerate(prepare.wider_val_records(RAW / sources.WIDER_VAL.filename, max_items=CFG["wider_val_max"])):
+for n, rec in enumerate(prepare.wider_val_records(FILES["wider_val"], max_items=CFG["wider_val_max"])):
     for subset in ("easy", "medium", "hard"):
         k = rec["keep"][subset]
         keep_in_range &= bool(np.all((k >= 0) & (k < len(rec["boxes"]))))
@@ -462,8 +509,8 @@ md("""
 code("""
 detector = FaceDetector.from_torch(det_model, device=str(DEVICE), score_threshold=max(0.3, thr["threshold"] - 0.1), max_side=640)
 detect_fn = detector.as_detect_fn()
-binary_paths = [RAW / s.filename for s in sources.EMONET_BINARY[: CFG["emonet_files"]]]
-hq_paths = [RAW / s.filename for s in sources.EMONET_HQ[: CFG["hq_files"]]]
+binary_paths = [FILES[s.name] for s in sources.EMONET_BINARY[: CFG["emonet_files"]]]
+hq_paths = [FILES[s.name] for s in sources.EMONET_HQ[: CFG["hq_files"]]]
 t0 = time.time()
 ARR_RUN = ARR / RUN_ID   # these crops depend on this run's detector, so they are never shared between runs
 if not arrays.array_exists(ARR_RUN, "emonet_binary"):
@@ -838,7 +885,10 @@ def build(path: Path) -> None:
     nb.metadata["accelerator"] = "GPU"
     for cell in CELLS:
         if cell[0] == "markdown":
-            nb.cells.append(nbf.v4.new_markdown_cell(cell[1]))
+            markdown = nbf.v4.new_markdown_cell(cell[1])
+            if len(cell) > 2 and cell[2]:
+                markdown["attachments"] = cell[2]
+            nb.cells.append(markdown)
         else:
             c = nbf.v4.new_code_cell(cell[1])
             if cell[2]:

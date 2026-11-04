@@ -31,7 +31,8 @@ run.mkdir(parents=True, exist_ok=True)
 out_nb = run / f"03_end_to_end.{mode}.executed.ipynb"
 command = ["papermill", str(REPO / "notebooks" / "03_end_to_end.ipynb"), str(out_nb), "--cwd", str(REPO),
            "--log-output", "--progress-bar", "--request-save-on-cell-execute",
-           "-p", "MODE", mode, "-p", "EXP", exp, "-p", "RUN_ID", run_id]
+           "-p", "MODE", mode, "-p", "EXP", exp, "-p", "RUN_ID", run_id,
+           "-p", "USE_DRIVE", "False"]   # nobody can approve the Drive page in an unattended run
 for key in ("DET_BUDGET_MIN", "ID_BUDGET_MIN", "EXPR_BUDGET_MIN"):
     if os.environ.get(key):
         command += ["-p", key, os.environ[key]]

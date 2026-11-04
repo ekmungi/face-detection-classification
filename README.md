@@ -56,6 +56,8 @@ No data, face image, label, embedding or model weight is in this repository; a p
   dataset with its licence); `prepare.py`; `export.py` (ONNX); `detect.py`, `pipeline.py`, `gallery.py`, `cli.py`.
 - `notebooks/03_end_to_end.ipynb`: data, checks, the three trainings, the tests, figures, ONNX export and the model
   card, in one run. It is generated from `tools/build_notebook.py`.
+- `docs/figures/`: the figures, each kept as a PNG with its source; `pipeline_flow.png` (how the models feed each
+  other) is also embedded in the notebook, right after the introduction.
 - `train.py`: identity training from the command line (the notebook runs it as a second process).
 - `tools/colab_launch.py`, `tools/colab_status.py`: start the notebook headless on a Colab machine and read its state.
 
@@ -78,9 +80,13 @@ hours). Each training plans its epochs from the speed it measures, so it finishe
 With the Jupyter and Google Colab extensions installed, open `notebooks/03_end_to_end.ipynb`, click Select Kernel,
 then Colab, New Colab Server, **GPU** and a machine (the smoke run was tested on an L4; the full run needs an A100),
 and run the cells in order. The first setup cell clones this repository onto the Colab machine, and it stops with a
-message on a TPU or CPU machine, because the notebook needs a CUDA GPU. Set `MODE` in the first code cell. The
-notebook does not mount Google Drive, so its results stay in `/content/artifacts` and are lost with the machine:
-download what you want to keep before you run `Colab: Remove Server`.
+message on a TPU or CPU machine, because the notebook needs a CUDA GPU. Set `MODE` in the first code cell. With
+`USE_DRIVE = True` (the default) the data cell mounts Google Drive, after you approve Google's page, and keeps the
+downloaded files in the artifacts folder's `data/raw` there, so they are downloaded only once; the archives are still
+unpacked onto the machine, and the Face Research Lab London Set never goes to Drive. The run's results stay in
+`/content/artifacts` and are lost with the machine: download what you want to keep before you run `Colab: Remove
+Server`. `tools/colab_launch.py` sets `USE_DRIVE False`, because nobody can approve the Drive page in an unattended
+run.
 
 ## Using the models on a laptop
 

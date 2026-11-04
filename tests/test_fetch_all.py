@@ -150,3 +150,53 @@ def test_safe_extract_stops_on_the_signal_and_writes_no_marker(tmp_path):
     with pytest.raises(DownloadStopped):
         datasets.safe_extract(archive, tmp_path / "out", stop=stop)
     assert not (tmp_path / "out" / ".extracted-pack.zip").exists()
+
+
+# --- Downloaded files in one folder (Google Drive), unpacked folders in another (the machine's disk) ----------
+
+def _recording_download(calls, payload=b"done"):
+    def download(source, dest, *, retries, stop):
+        calls.append((source.name, Path(dest)))
+        path = Path(dest) / source.filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_bytes(payload)
+        return path
+    return download
+
+
+def _zip_payload():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("a/one.png", b"1")
+    return buffer.getvalue()
+
+
+def test_fetch_all_keeps_archives_in_root_and_unpacks_into_extract_root(tmp_path):
+    drive, disk, calls = tmp_path / "drive", tmp_path / "disk", []
+    records = datasets.fetch_all([_source("pack", "pack.zip")], drive, extract_root=disk, workers=1, poll=0.01,
+                                 log=lambda _: None, download_fn=_recording_download(calls, _zip_payload()))
+    assert calls == [("pack", drive)]
+    assert (drive / "pack.zip").is_file() and not (drive / "pack").exists()
+    assert (disk / "pack" / "a" / "one.png").is_file()
+    assert records[0]["path"] == str(drive / "pack.zip") and records[0]["extracted"] == 1
+
+
+def test_fetch_all_keeps_local_sources_off_the_archive_folder(tmp_path):
+    drive, disk, calls = tmp_path / "drive", tmp_path / "disk", []
+    records = datasets.fetch_all([_source("open"), _source("private")], drive, extract_root=disk,
+                                 local_names={"private"}, workers=2, poll=0.01, log=lambda _: None,
+                                 download_fn=_recording_download(calls))
+    assert sorted(calls) == [("open", drive), ("private", disk)]
+    assert not (drive / "private.bin").exists()
+    assert [Path(r["path"]).parent for r in records] == [drive, disk]
+
+
+def test_fetch_all_says_which_files_were_already_there(tmp_path):
+    drive, lines = tmp_path / "drive", []
+    drive.mkdir()
+    (drive / "big.bin").write_bytes(b"done")
+    records = datasets.fetch_all([_source("big"), _source("new")], drive, workers=2, poll=0.01, log=lines.append,
+                                 download_fn=_recording_download([]))
+    assert [r["origin"] for r in records] == ["already there", "downloaded"]
+    assert any("already there" in line for line in lines)

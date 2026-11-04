@@ -46,3 +46,14 @@ def test_no_tracked_file_carries_a_record_number():
             if RECORD_NUMBER.search(line):
                 found.append(f"{name}:{number}: {RECORD_NUMBER.search(line).group(0)}")
     assert found == [], "record numbers belong in the private notes, not the repository:\n" + "\n".join(found)
+
+
+def test_the_notebook_carries_the_pipeline_figure_from_docs_figures():
+    import base64
+    cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    figure = cells[1]
+    assert figure["cell_type"] == "markdown"
+    source = figure["source"] if isinstance(figure["source"], str) else "".join(figure["source"])
+    assert "attachment:pipeline_flow.png" in source
+    attached = base64.b64decode(figure["attachments"]["pipeline_flow.png"]["image/png"])
+    assert attached == (ROOT / "docs" / "figures" / "pipeline_flow.png").read_bytes()
