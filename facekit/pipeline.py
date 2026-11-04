@@ -88,9 +88,9 @@ class FaceAnalyzer:
         card = json.loads((folder / "model_card.json").read_text(encoding="utf-8"))
         detector = FaceDetector.from_onnx(folder / "detector.onnx", score_threshold=card["detector"]["score_threshold"],
                                           max_side=max_side)
-        loaded = Gallery.load(gallery) if gallery and Path(gallery).exists() else None
-        if loaded is None and gallery:
-            loaded = Gallery(card["identity"]["threshold"])
+        if gallery and not Path(gallery).exists():
+            raise FileNotFoundError(f"gallery not found: {gallery} (enrol people first with `facekit enroll`)")
+        loaded = Gallery.load(gallery) if gallery else None
         return cls(detector, _onnx_net(folder / "expression.onnx"), _onnx_net(folder / "embedder.onnx"),
                    card["expression"]["classes"], card["expression"]["input_size"],
                    card["expression"].get("temperature", 1.0), loaded)
@@ -98,8 +98,17 @@ class FaceAnalyzer:
     def embed_crops(self, crops112: list[np.ndarray]) -> np.ndarray:
         """Returns L2-normalised embeddings, adding the mirrored face's embedding as in evaluation."""
         batch = _to_batch(crops112)
-        embeddings = self.embedding_net(batch) + self.embedding_net(np.ascontiguousarray(batch[:, :, :, ::-1]))
+        both = self.embedding_net(np.concatenate([batch, np.ascontiguousarray(batch[:, :, :, ::-1])]))  # one call
+        embeddings = both[: len(batch)] + both[len(batch):]
         return embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True).clip(1e-12)
+
+    def embed_largest_face(self, image_rgb: np.ndarray) -> np.ndarray | None:
+        """Returns the embedding of the largest face in the photo, or None; enrolment needs nothing else."""
+        detections = self.detector.detect(image_rgb)
+        if not detections:
+            return None
+        largest = max(detections, key=lambda d: (d.box[2] - d.box[0]) * (d.box[3] - d.box[1]))
+        return self.embed_crops([align.align_face(image_rgb, largest.landmarks, 112)])[0]
 
     def analyze(self, image_rgb: np.ndarray) -> list[FaceResult]:
         """Returns one FaceResult per detected face, highest detection score first."""

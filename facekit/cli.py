@@ -24,14 +24,16 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
 def _images(folder: Path):
-    return sorted(p for p in folder.rglob("*") if p.suffix.lower() in IMAGE_SUFFIXES)
+    return sorted(p for p in folder.rglob("*") if p.suffix.lower() in IMAGE_SUFFIXES and not p.name.startswith("._"))
 
 
 def enroll(models: Path, people: Path, gallery_path: Path, threshold: float | None = None) -> dict:
     """Enrols each person folder's largest face per photo; returns how many photos were used per person."""
     analyzer = FaceAnalyzer.from_model_dir(models)
     card = json.loads((models / "model_card.json").read_text(encoding="utf-8"))
-    gallery = Gallery.load(gallery_path) if gallery_path.exists() else Gallery(threshold or card["identity"]["threshold"])
+    gallery = Gallery.load(gallery_path) if gallery_path.exists() else Gallery(card["identity"]["threshold"])
+    if threshold is not None:
+        gallery.threshold = float(threshold)
     used: dict[str, int] = {}
     for person in sorted(p for p in people.iterdir() if p.is_dir()):
         vectors = []
@@ -39,11 +41,9 @@ def enroll(models: Path, people: Path, gallery_path: Path, threshold: float | No
             image = read_rgb(photo)
             if image is None:
                 continue
-            faces = analyzer.analyze(image)
-            if faces:
-                largest = max(faces, key=lambda f: (f.detection.box[2] - f.detection.box[0]) *
-                              (f.detection.box[3] - f.detection.box[1]))
-                vectors.append(largest.embedding)
+            embedding = analyzer.embed_largest_face(image)
+            if embedding is not None:
+                vectors.append(embedding)
         if vectors:
             gallery.enroll(person.name, np.stack(vectors))
         used[person.name] = len(vectors)
