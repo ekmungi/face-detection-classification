@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.3 - 2026-11-04
+
+- The notebook's download cell no longer looks frozen and no longer hangs the kernel when it is stopped.
+  `datasets.fetch_all` prints a line for each dataset as soon as it finishes, and every 30 seconds a progress line
+  with what is still downloading or unpacking, the gigabytes so far and the current speed. Stopping the cell ends
+  every download within seconds, keeps the finished files and says how many are complete; running the cell again
+  skips them. A failed download stops the others and reports its error.
+- `datasets.download` and `datasets.safe_extract` take an optional stop signal, checked between chunks and between
+  archive members, and a stopped download leaves no partial file.
+
 ## 0.2.2 - 2026-11-04
 
 - Every code cell of the end-to-end notebook now has a markdown explanation before it: what the code does and why,

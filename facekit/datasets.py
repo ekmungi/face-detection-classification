@@ -12,7 +12,9 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import random
 import shutil
 import tarfile
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any, Callable, Iterable, Sequence
 import urllib.error
 import urllib.request
@@ -31,6 +33,15 @@ class DownloadError(Exception):
 
 class UnsafeArchiveError(Exception):
     """Raised when an archive contains members that escape the destination directory."""
+
+
+class DownloadStopped(Exception):
+    """Raised inside a download or an extraction when the caller has set its stop signal."""
+
+
+def _check_stop(stop: threading.Event | None, what: str) -> None:
+    if stop is not None and stop.is_set():
+        raise DownloadStopped(what)
 
 
 @dataclass(frozen=True)
@@ -72,12 +83,14 @@ def _stream_to_part(
     opener: Callable[..., Any],
     chunk_size: int,
     timeout: float,
+    stop: threading.Event | None = None,
 ) -> tuple[int, str]:
-    """Stream URL content into part_path and return (total_bytes, sha256_hex)."""
+    """Stream URL content into part_path and return (total_bytes, sha256_hex); checks `stop` between chunks."""
     hasher = hashlib.sha256()
     total = 0
     with opener(source.url, timeout=timeout) as response, part_path.open("wb") as out:
         while chunk := response.read(chunk_size):
+            _check_stop(stop, source.filename)
             out.write(chunk)
             hasher.update(chunk)
             total += len(chunk)
@@ -93,8 +106,14 @@ def download(
     retries: int = 3,
     backoff: float = 2.0,
     timeout: float = 60,
+    stop: threading.Event | None = None,
 ) -> Path:
-    """Download a source file atomically with retries, size check, and SHA-256 check."""
+    """Download a source file atomically with retries, size check, and SHA-256 check.
+
+    `retries` is the number of attempts in all. When `stop` is set, the download ends within one chunk (or one
+    network timeout at worst), removes its partial file and raises DownloadStopped; a finished file is kept, so a
+    second call skips it.
+    """
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
     final_path = dest / source.filename
@@ -107,13 +126,20 @@ def download(
 
     for attempt in range(1, max(1, retries) + 1):
         try:
-            total, digest = _stream_to_part(source, part_path, opener, chunk_size, timeout)
+            total, digest = _stream_to_part(source, part_path, opener, chunk_size, timeout, stop)
             break
+        except DownloadStopped:
+            part_path.unlink(missing_ok=True)
+            raise
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
             last_error = exc
             part_path.unlink(missing_ok=True)
             if attempt < retries:
-                time.sleep(backoff * attempt)
+                if stop is not None:
+                    if stop.wait(backoff * attempt):
+                        raise DownloadStopped(source.filename) from exc
+                else:
+                    time.sleep(backoff * attempt)
     else:
         raise DownloadError(f"Failed to download {source.url} after {retries} attempts") from last_error
 
@@ -168,8 +194,9 @@ def _validate_tar_member(member: tarfile.TarInfo, dest_resolved: Path) -> None:
             raise UnsafeArchiveError(f"Archive link escapes destination: {member.linkname!r}")
 
 
-def _extract_zip(archive_path: Path, dest_path: Path, dest_resolved: Path) -> list[Path]:
-    """Validate and extract a ZIP archive into dest_path."""
+def _extract_zip(archive_path: Path, dest_path: Path, dest_resolved: Path,
+                 stop: threading.Event | None = None) -> list[Path]:
+    """Validate and extract a ZIP archive into dest_path; checks `stop` before each member."""
     with zipfile.ZipFile(archive_path, "r") as zf:
         infos = zf.infolist()
         for info in infos:
@@ -178,6 +205,7 @@ def _extract_zip(archive_path: Path, dest_path: Path, dest_resolved: Path) -> li
         dest_path.mkdir(parents=True, exist_ok=True)
         extracted: list[Path] = []
         for info in infos:
+            _check_stop(stop, archive_path.name)
             out_path = dest_path / info.filename
             if info.is_dir():
                 out_path.mkdir(parents=True, exist_ok=True)
@@ -189,8 +217,9 @@ def _extract_zip(archive_path: Path, dest_path: Path, dest_resolved: Path) -> li
         return extracted
 
 
-def _extract_tar(archive_path: Path, dest_path: Path, dest_resolved: Path) -> list[Path]:
-    """Validate and extract a TAR/TAR.GZ/TGZ archive into dest_path."""
+def _extract_tar(archive_path: Path, dest_path: Path, dest_resolved: Path,
+                 stop: threading.Event | None = None) -> list[Path]:
+    """Validate and extract a TAR/TAR.GZ/TGZ archive into dest_path; checks `stop` before each member."""
     with tarfile.open(archive_path, "r:*") as tf:
         members = tf.getmembers()
         for member in members:
@@ -199,6 +228,7 @@ def _extract_tar(archive_path: Path, dest_path: Path, dest_resolved: Path) -> li
         dest_path.mkdir(parents=True, exist_ok=True)
         extracted: list[Path] = []
         for member in members:
+            _check_stop(stop, archive_path.name)
             out_path = dest_path / member.name
             if member.isdir():
                 out_path.mkdir(parents=True, exist_ok=True)
@@ -213,8 +243,12 @@ def _extract_tar(archive_path: Path, dest_path: Path, dest_resolved: Path) -> li
         return extracted
 
 
-def safe_extract(archive: str | Path, dest: str | Path) -> list[Path]:
-    """Safely extract a .zip, .tar, .tar.gz, or .tgz archive into dest."""
+def safe_extract(archive: str | Path, dest: str | Path, *, stop: threading.Event | None = None) -> list[Path]:
+    """Safely extract a .zip, .tar, .tar.gz, or .tgz archive into dest.
+
+    When `stop` is set, extraction ends before the next member and raises DownloadStopped without writing the
+    marker, so the next call extracts the archive again from the start.
+    """
     archive_path = Path(archive)
     dest_path = Path(dest)
 
@@ -227,9 +261,9 @@ def safe_extract(archive: str | Path, dest: str | Path) -> list[Path]:
 
     dest_resolved = dest_path.resolve()
     if archive_path.name.lower().endswith(".zip"):
-        extracted = _extract_zip(archive_path, dest_path, dest_resolved)
+        extracted = _extract_zip(archive_path, dest_path, dest_resolved, stop)
     else:
-        extracted = _extract_tar(archive_path, dest_path, dest_resolved)
+        extracted = _extract_tar(archive_path, dest_path, dest_resolved, stop)
 
     dest_path.mkdir(parents=True, exist_ok=True)
     marker.write_text("", encoding="utf-8")
@@ -309,3 +343,90 @@ def fetch(
         counts[source.name] = count_images(extract_dir)
 
     return write_manifest(root_path / "manifest.json", source_list, counts)
+
+
+def _bytes_on_disk(sources: Sequence[Source], root: Path) -> int:
+    """Bytes written so far for these sources: finished files and partial (.part) files together."""
+    total = 0
+    for source in sources:
+        for path in (root / source.filename, root / f"{source.filename}.part"):
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def fetch_all(
+    sources: Iterable[Source],
+    root: str | Path,
+    *,
+    workers: int = 6,
+    retries: int = 4,
+    report_every: float = 30.0,
+    poll: float = 0.5,
+    log: Callable[[str], Any] = print,
+    download_fn: Callable[..., Path] | None = None,
+) -> list[dict[str, Any]]:
+    """Downloads and unpacks every source in parallel for the notebook's data cell, and reports as it goes.
+
+    It logs one line for each source as soon as that source is done, in the order they finish, and every
+    `report_every` seconds a progress line that names what is still running and how many gigabytes are on disk.
+    It waits in steps of `poll` seconds, so an interrupt (Ctrl+C, or the notebook's stop button) reaches it at
+    once. It then sets the stop signal, waits for the downloads to end, keeps every finished file and raises
+    KeyboardInterrupt; running it again skips the finished downloads. A failed download stops the others the same
+    way and raises its error. Returns one record per source, in the order given: name, size in bytes, files
+    extracted and seconds.
+    """
+    root_path = Path(root)
+    root_path.mkdir(parents=True, exist_ok=True)
+    source_list = list(sources)
+    download_fn = download_fn or download
+    stop = threading.Event()
+    state: dict[str, str] = {source.name: "queued" for source in source_list}
+    results: dict[str, dict[str, Any]] = {}
+
+    def one(source: Source) -> dict[str, Any]:
+        started = time.monotonic()
+        state[source.name] = "downloading"
+        path = download_fn(source, root_path, retries=retries, stop=stop)
+        extracted = 0
+        if _is_archive_name(path.name):
+            state[source.name] = "unpacking"
+            extracted = len(safe_extract(path, root_path / source.name, stop=stop))
+        state[source.name] = "done"
+        return {"name": source.name, "size": path.stat().st_size, "extracted": extracted,
+                "seconds": round(time.monotonic() - started, 1)}
+
+    pool = ThreadPoolExecutor(max_workers=max(1, workers))
+    pending = {pool.submit(one, source) for source in source_list}
+    started = last_report = time.monotonic()
+    last_bytes = _bytes_on_disk(source_list, root_path)
+    try:
+        while pending:
+            done, pending = wait(pending, timeout=poll, return_when=FIRST_COMPLETED)
+            for future in done:
+                record = future.result()
+                results[record["name"]] = record
+                log(f"{record['name']:22s} {record['size'] / 1e9:6.2f} GB  extracted {record['extracted']:7d} files  "
+                    f"{record['seconds']:6.1f} s")
+            now = time.monotonic()
+            if pending and now - last_report >= report_every:
+                on_disk = _bytes_on_disk(source_list, root_path)
+                rate = (on_disk - last_bytes) / max(now - last_report, 1e-9) / 1e6
+                working = ", ".join(f"{name} ({how})" for name, how in state.items() if how in ("downloading", "unpacking"))
+                log(f"[{(now - started) / 60:4.1f} min] {len(results)} of {len(source_list)} done; still working on "
+                    f"{working or 'queued downloads'}; {on_disk / 1e9:.2f} GB so far, {rate:.1f} MB/s")
+                last_report, last_bytes = now, on_disk
+    except KeyboardInterrupt:
+        stop.set()
+        pool.shutdown(wait=True, cancel_futures=True)
+        log(f"Stopped after {(time.monotonic() - started) / 60:.1f} min. {len(results)} of {len(source_list)} sources "
+            "are complete and kept; run this cell again to continue with the rest.")
+        raise
+    except BaseException:
+        stop.set()
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True)
+    return [results[source.name] for source in source_list]

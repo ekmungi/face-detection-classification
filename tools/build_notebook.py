@@ -150,7 +150,7 @@ SUMMARY["config"] = CFG
 md("""
 ## 2. Data: download every dataset and record its licence
 
-**Download and unpack the datasets.** This cell downloads every file the run needs, up to six at a time. It checks each file's size where the project records it, tries each download up to four times in total, and unpacks the zip archives into `/content/data/raw` on the machine's own disk. That folder is never synced to Google Drive, so no dataset is copied anywhere else. Smoke mode still downloads about 8.7 GB, because WIDER FACE and each DigiFace part come as single large archives. Microsoft's DigiFace server is slow, about 5 MB/s for each file, and a smoke run on an L4 took 763 seconds for this cell. The cell prints one line for each dataset in the fixed order of its list, with WIDER first and DigiFace and the London set last. A line therefore appears only when that dataset and every dataset above it have finished. The cell then writes `data_manifest.json`, which lists every source with its address, its licence and the number of images unpacked from each archive, and it prints the licence of each source. The parquet and text files are recorded with a count of zero, because they are not unpacked. A good result is a line for every dataset with a size above zero. The Face Research Lab London Set is downloaded only for one expression check in section 8, and this notebook never uses it to identify anyone.
+**Download and unpack the datasets.** This cell downloads every file the run needs, up to six at a time. It checks each file's size where the project records it, tries each download up to four times in total, and unpacks the zip archives into `/content/data/raw` on the machine's own disk. That folder is never synced to Google Drive, so no dataset is copied anywhere else. Smoke mode still downloads about 8.7 GB, because WIDER FACE and each DigiFace part come as single large archives. Microsoft's DigiFace server is slow, about 5 MB/s for each file, and a smoke run on an L4 took 763 seconds for this cell. The cell prints a line for each dataset as soon as it is done. Every 30 seconds it also prints a progress line that names what is still downloading or unpacking, how many gigabytes have arrived and the current speed, so a long wait shows steady progress. If you stop the cell, it ends within a few seconds, keeps every finished download and says how many are complete, and running the cell again continues with the rest. The cell then writes `data_manifest.json`, which lists every source with its address, its licence and the number of images unpacked from each archive, and it prints the licence of each source. The parquet and text files are recorded with a count of zero, because they are not unpacked. A good result is a line for every dataset with a size above zero. The Face Research Lab London Set is downloaded only for one expression check in section 8, and this notebook never uses it to identify anyone.
 """)
 code("""
 LONDON = [sources.LONDON_NEUTRAL, sources.LONDON_SMILING]
@@ -160,18 +160,10 @@ WANTED = ([sources.WIDER_TRAIN, sources.RETINAFACE_LABELS, sources.WIDER_VAL, WI
           + sources.EMONET_BINARY[:CFG["emonet_files"]] + sources.EMONET_HQ[:CFG["hq_files"]]
           + [sources.digiface_part(p) for p in CFG["digiface_train"] + [CFG["digiface_test"]]] + LONDON)
 
-def get(source):
-    started = time.time()
-    path = datasets.download(source, RAW, retries=4)
-    extracted = 0
-    if path.suffix == ".zip":
-        extracted = len(datasets.safe_extract(path, RAW / source.name))
-    return source.name, path.stat().st_size, extracted, round(time.time() - started, 1)
-
+# Six downloads at a time. A line appears as each dataset finishes and a progress line every 30 seconds. The stop
+# button ends the cell within seconds: finished downloads are kept, and running the cell again continues.
 started = time.time()
-with ThreadPoolExecutor(max_workers=6) as pool:
-    for name, size, extracted, seconds in pool.map(get, WANTED):
-        print(f"{name:22s} {size/1e9:6.2f} GB  extracted {extracted:7d} files  {seconds:6.1f} s")
+fetched = datasets.fetch_all(WANTED, RAW, workers=6, retries=4, report_every=30)
 print(f"all downloads and extractions: {time.time() - started:.0f} s")
 manifest = datasets.write_manifest(RUN / "data_manifest.json", WANTED, {s.name: datasets.count_images(RAW / s.name) for s in WANTED})
 print(f"{'dataset':22s} licence"); [print(f"{s['name']:22s} {s['licence']}") for s in manifest["sources"]]
