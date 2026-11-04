@@ -1,4 +1,4 @@
-"""Where each dataset comes from and under which licence. SPEC-001 records the same table and the reasons for each choice.
+"""Where each dataset comes from and under which licence. The project notes record the same table and the reasons for each choice.
 
 Nothing here downloads anything; `facekit.datasets.fetch` does that on the training machine.
 """

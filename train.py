@@ -4,7 +4,7 @@ The notebook starts this script as a second process so identity training shares 
 
     python train.py --task identity --arrays /content/data/arrays --run-dir RUN_DIR --budget-minutes 55
 
-It measures its own speed first and plans the epochs to fit the time budget (SPEC-001, time plan), writes plan.json,
+It measures its own speed first and plans the epochs to fit the time budget, writes plan.json,
 then trains with facekit.engine.fit, which resumes from the newest checkpoint if the run was interrupted.
 """
 from __future__ import annotations
@@ -68,7 +68,7 @@ def main(argv=None) -> int:
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
         print(f"[train] using the existing plan: {plan}", flush=True)
     else:
-        # "auto" applies SPEC-001's descoping order: the deepest network that still fits min_epochs in the budget.
+        # "auto" applies the planned descoping order: the deepest network that still fits min_epochs in the budget.
         candidates = ["iresnet50", "iresnet34", "iresnet18"] if args.depth == "auto" else [args.depth]
         tried = []
         for depth in candidates:

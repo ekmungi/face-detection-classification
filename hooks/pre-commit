@@ -1,5 +1,5 @@
 #!/bin/sh
-# Blocks data, weights, embeddings, images and notebooks with outputs from the public repository (SPEC-001, rule 10).
+# Blocks data, weights, embeddings, images and notebooks with outputs from the public repository.
 # Install: git config core.hooksPath hooks
 status=0
 for f in $(git diff --cached --name-only --diff-filter=AM); do

@@ -15,7 +15,7 @@ from torch import nn
 
 CLASSES: tuple[str, ...] = ("neutral", "happy", "sad", "surprise", "fear", "disgust", "anger", "contempt")
 
-# EmoNet-Face category names (the part after "Group|" in the HQ set) mapped to the eight classes. SPEC-001 records why.
+# EmoNet-Face category names (the part after "Group|" in the HQ set) mapped to the eight classes. The project notes record why.
 EMONET_TO_CLASS: dict[str, str] = {
     "Amusement": "happy",
     "Elation": "happy",

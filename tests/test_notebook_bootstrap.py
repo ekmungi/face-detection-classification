@@ -1,4 +1,4 @@
-"""Tests for the end-to-end notebook's bootstrap cell (SPEC-004): clone the code on Colab, stop on a Colab machine without a GPU.
+"""Tests for the end-to-end notebook's bootstrap cell: clone the code on Colab, stop on a Colab machine without a GPU.
 
 The cell runs before the project can be imported, so it is plain inline code in tools/build_notebook.py. These tests run its
 source with stand-ins for the three calls that touch the machine: os.path.isdir, shutil.which and subprocess.run.

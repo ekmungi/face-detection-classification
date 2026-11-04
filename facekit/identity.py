@@ -145,7 +145,7 @@ class ArcFaceHead(nn.Module):
 class CosFaceHead(ArcFaceHead):
     """Additive cosine margin head (CosFace): logits = s * (cos(theta) - m) for the true class, s * cos(theta) otherwise.
 
-    It converges more reliably than ArcFace in a short schedule from scratch, which is why SPEC-001 chose it.
+    It converges more reliably than ArcFace in a short schedule from scratch, which is why this project uses it.
     """
 
     def __init__(self, embedding_size: int, num_classes: int, scale: float = 64.0, margin: float = 0.35):

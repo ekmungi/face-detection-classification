@@ -3,7 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 notebooks/*_output.ipynb
-# Data, weights, embeddings and images never go in this public repository (SPEC-001).
+# Data, weights, embeddings and images never go in this public repository.
 *.pt
 *.pth
 *.onnx

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.2 - 2026-11-04
+
+- Every code cell of the end-to-end notebook now has a markdown explanation before it: what the code does and why,
+  what goes in and comes out, what in its output shows that it worked, and, for the training and test cells, what a
+  good result looks like. The introduction says how to run the notebook and what smoke mode is for.
+- Internal record numbers from the project's private notes are removed from the code, the notebook, the hook and
+  the evaluation report, which now states the reason itself (the London set is a test-only set, because its consent
+  does not name face recognition).
+- Two tests guard both rules: one fails when a notebook code cell has no explanation before it, and one fails when a
+  tracked file carries a record number.
+
 ## 0.2.1 - 2026-11-04
 
 - The end-to-end notebook now runs on a Colab kernel opened from VS Code or the browser. A new first setup cell

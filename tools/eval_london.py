@@ -1,8 +1,9 @@
-"""Identity on real faces: the Face Research Lab London Set, as SPEC-002 and DEC-001 in the vault set out.
+"""Identity on real faces: the Face Research Lab London Set, used only as a test set, because its consent covers research
+use and public sharing but does not name face recognition.
 
 Downloads the neutral and smiling front zips (size-checked) into a local folder that must be outside the repository
 and outside any synced folder, runs every photo through the production pipeline on this computer's CPU (our ONNX
-detector, five-point alignment, the ONNX embedder with the mirrored face), and writes the SPEC-002 report, the
+detector, five-point alignment, the ONNX embedder with the mirrored face), and writes the evaluation report, the
 similarity matrix (no embeddings) and the figures. It also times each stage, for choosing the machine that will
 index a photo library.
 
@@ -35,7 +36,8 @@ LIMITS = ("102 adults photographed in one session, front views, with only an exp
 
 
 def check_data_folder(data: Path) -> None:
-    """Refuses a download folder inside the repository or inside a folder that syncs to the cloud (DEC-001).
+    """Refuses a download folder inside the repository or inside a folder that syncs to the cloud: the London
+    photos stay on this computer and never go to a synced or shared folder.
 
     ResearchArtifacts is refused by name too, because Google Drive for desktop syncs it on this computer.
     """
@@ -90,7 +92,7 @@ def main() -> int:
 
     extra = {
         "dataset": "Face Research Lab London Set, neutral_front and smiling_front", "credit": CREDIT,
-        "use": "test only (DEC-001_FDC)",
+        "use": "test only: the subjects consented to research use and public sharing, and the consent does not name face recognition",
         "photos_per_view": {v: sum(1 for x in records if x["view"] == v) for v in ("neutral", "smiling")},
         "model_card": {"code_version": card.get("code_version"), "trained_on": identity.get("trained_on"),
                        "threshold_1to1": identity["threshold_1to1"], "threshold_1toN": identity["threshold"]},

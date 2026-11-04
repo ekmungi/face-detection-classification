@@ -1,7 +1,7 @@
 """Identity evaluation on a folder of real people, through the same path a photo takes in production.
 
 Every photo is read, its largest face is detected, aligned and embedded (with the mirrored face added), and the
-embeddings are scored as SPEC-002 sets out:
+embeddings are scored as follows:
 
 - verification over every pair of photos: ROC AUC, equal error rate, TAR at FAR 1e-2 and 1e-3 with 95% bootstrap
   intervals, and the real FAR and TAR at the model card's 1:1 threshold;
@@ -198,7 +198,7 @@ def open_set_splits(embeddings: np.ndarray, labels: np.ndarray, views: np.ndarra
 
 def evaluate_embeddings(embeddings: np.ndarray, labels: np.ndarray, views: np.ndarray | None, threshold_1to1: float,
                         threshold_1toN: float, n_boot: int = 1000, n_splits: int = 20, seed: int = 0) -> dict:
-    """Returns the SPEC-002 report (plain JSON) for embeddings of people with at least one photo each."""
+    """Returns the evaluation report (plain JSON) for embeddings of people with at least one photo each."""
     labels = np.asarray(labels)
     views = None if views is None or not any(np.asarray(views)) else np.asarray(views)
     multi = sum(1 for p in np.unique(labels) if (labels == p).sum() >= 2)

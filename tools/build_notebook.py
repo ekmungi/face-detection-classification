@@ -20,16 +20,22 @@ def code(text, tags=None):
 md("""
 # Face detection, expression and identity: trained end to end on Colab
 
-This notebook trains and tests the three models of SPEC-001 and saves them for the CPU pipeline:
+This notebook trains three neural networks from open data, tests each one, and saves them in a form that runs on an ordinary laptop CPU:
 
-1. **Detector**: a CenterFace-style network (ResNet-18 ImageNet backbone) trained on WIDER FACE to find faces and five landmarks.
-2. **Expression**: ConvNeXt-Tiny (ImageNet backbone) fine-tuned on EmoNet-Face portraits aligned with our own detector, eight classes.
-3. **Identity**: IResNet trained from scratch with a CosFace margin on DigiFace-1M synthetic identities.
+1. **Detector.** It finds every face in a photo and five landmark points on each face: the two eyes, the nose tip and the two corners of the mouth. It follows the design of CenterFace, a published detector that finds each face by predicting the point at its centre. Its backbone, the main part of the network, is a ResNet-18 that starts from general ImageNet weights. The backbone turns the photo into feature maps, grids of numbers that describe each region of the photo, and a small head on top reads those maps and predicts where the face centres are. The detector is trained on WIDER FACE, a set of real web photos of crowds and events.
+2. **Expression.** It says which of eight expressions a face shows. It is a ConvNeXt-Tiny classifier, also started from ImageNet weights, and fine-tuned on EmoNet-Face, a set of AI-generated portraits labelled by experts. Each portrait is first cut out and turned upright using our own detector's landmarks.
+3. **Identity.** It turns a face into an embedding, a list of 512 numbers, and the embeddings of two photos of the same person point in almost the same direction. The network is an IResNet, a ResNet variant built for face recognition, trained from random weights on DigiFace-1M, a set of synthetic faces rendered from 3D models. Its training uses a CosFace margin: the score for the correct person is lowered by a fixed amount, so the network has to separate different people by a wider gap.
 
-No model that was already trained for a face task is used. Every dataset's licence is in the manifest below and in the model card.
-The notebook runs headless with papermill (`MODE` below); every training writes checkpoints and resumes if the run is interrupted.
+No network that was already trained on faces is used. Every dataset and its licence are recorded in a manifest in section 2. The model card in section 10 also records the licences of the four training sources: WIDER FACE, the RetinaFace annotations, DigiFace-1M and EmoNet-Face.
+
+**How to run it.** The notebook needs a Colab machine with an NVIDIA GPU. With `MODE = "smoke"`, the default, every cell runs on small slices of each dataset. That tests the whole notebook quickly, but the models it produces are not useful. With `MODE = "full"` it is the real run. The run that produced the current models took 64 minutes on an A100, with budgets of 40 minutes for the detector, 50 for identity and 12 for expression, so the larger default budgets in the next cell make a longer run. Most sections run checks that print PASS or FAIL, and the last cell prints ALL CHECKS PASSED when every check held. Without a Google Drive mount, everything the run writes stays on the Colab machine and is lost when the server is removed, so download what you want to keep first.
 """)
 
+md("""
+## Parameters
+
+The next cell holds the six settings of a run. `MODE` chooses smoke or full. `EXP` and `RUN_ID` name the folder the results go into, for example `scratch/smoke-001` for a smoke run or `exp-001/run-003` for the real run that produced the current models. The three budgets set how many minutes each training is planned to take. Each training measures its own speed first and plans its epochs, the full passes over its training data, to fit its budget. The detector and identity trainings stop at their budgets, and the expression training may run up to 1.3 times its budget. Papermill is a tool that runs a notebook from top to bottom as an ordinary program. When it runs this notebook unattended, it finds this cell by its tag `parameters` and replaces these values. To run the notebook by hand, change `MODE` here before you start. For a full run, also give `EXP` and `RUN_ID` new values, such as `exp-001` and `run-004`, so that the run writes into its own folder and does not reuse the plans of an earlier run.
+""")
 code("""
 # Parameters (papermill overrides these).
 MODE = "smoke"            # "smoke": tiny subsets to test every cell; "full": the real run
@@ -40,9 +46,13 @@ ID_BUDGET_MIN = 55.0      # minutes for identity training (a second process on t
 EXPR_BUDGET_MIN = 12.0    # minutes for expression training
 """, tags=["parameters"])
 
-md("## 1. Setup")
+md("""
+## 1. Setup
+
+**Get the code onto the machine.** This cell matters only when the notebook runs on a Colab kernel opened from VS Code or the browser, and it does nothing on a laptop. Colab gives every new server an empty disk, so the project's code has to be copied onto each new server. The cell first checks that the machine has an NVIDIA GPU, by looking for the `nvidia-smi` program that NVIDIA's driver installs. If there is none, it stops at once with a message, because a TPU or CPU machine cannot run this notebook. It then copies this project's public GitHub repository to `/content/face-detection-classification`, unless a copy is already there. A good result is that the cell finishes in a few seconds without an error.
+""")
 code('''
-# Bootstrap for a Colab kernel opened from VS Code or the browser (SPEC-004). It does nothing on this laptop.
+# Bootstrap for a Colab kernel opened from VS Code or the browser. It does nothing on this laptop.
 # On a Colab machine it stops at once without an NVIDIA GPU, and it clones the code when the clone is missing.
 import os, shutil, subprocess
 REPO_URL = "https://github.com/ekmungi/face-detection-classification"
@@ -56,6 +66,9 @@ if os.path.isdir("/content"):              # a Colab machine: the same test that
     if not os.path.isdir(COLAB_CLONE):
         subprocess.run(["git", "clone", "--depth", "1", REPO_URL, COLAB_CLONE], check=True)
 ''')
+md("""
+**Load the project and prepare the run.** This cell lets Python load the copied code. It installs ONNX, the library that saves models in the ONNX file format, and ONNX Runtime, the library that later runs those files on a CPU, if either is missing. It then loads the project's modules, picks the GPU and creates the run folder with `figures/` and `models/` inside it. It also defines two helpers that later cells use. `check()` prints PASS or FAIL together with the number it measured, and it keeps a list for the final summary. `savefig()` saves each figure into the run folder and shows it. Look at the first line the cell prints: it should say `device=cuda` and name the GPU, for example `gpu=NVIDIA L4`. The last line gives the code version, the Git commit the run uses, so that every result can be traced to the exact code.
+""")
 code("""
 import os, sys, json, time, subprocess, shutil, hashlib, platform
 from pathlib import Path
@@ -114,8 +127,11 @@ print("code version:", runlib.read_code_version(REPO))
 SUMMARY.update({"gpu": gpu, "cpus": CPUS, "code_version": runlib.read_code_version(REPO)})
 """)
 
+md("""
+**Choose the amount of data for this mode.** Both modes run exactly the same cells, and only the amount of data and the number of training steps differ. DigiFace-1M comes in parts, archives of 2,000 synthetic identities each. Smoke mode trains the identity model on at most 300 identities of one part and tests it on 100 identities of another. It uses 600 WIDER training photos and 120 WIDER validation photos, at most 600 portraits from one EmoNet-Face Binary file and 120 from one HQ file, and a few dozen training steps per model. Full mode trains on two DigiFace parts and tests on a third. It uses all of WIDER FACE, all five EmoNet-Face Binary files and two of the seven HQ files, and it trains each model for its planned epochs or until its time budget runs out, whichever comes first. The cell also decides how many CPU processes load data for each training. The detector gets most of them, because it decodes JPEG photos as it trains, and the identity model gets two or three, because it reads images that are already decoded. Read the printed configuration to confirm the mode before the long cells start.
+""")
 code("""
-# The configuration of each mode. The full run's sizes follow SPEC-001; the smoke run uses tiny subsets of the same data.
+# The configuration of each mode. The smoke run uses tiny subsets of the same data as the full run.
 CFG = {
     "smoke": dict(digiface_train=["0-1999"], digiface_test="8000-9999", id_max_ids=300, id_val_ids=60, id_max_per_id=24,
                   id_test_ids=100, emonet_files=1, emonet_max=600, hq_files=1, hq_max=120, wider_train_max=600,
@@ -131,7 +147,11 @@ print(json.dumps(CFG, indent=1)); print("workers: detector", WORKERS_DET, "ident
 SUMMARY["config"] = CFG
 """)
 
-md("## 2. Data: download every dataset and record its licence")
+md("""
+## 2. Data: download every dataset and record its licence
+
+**Download and unpack the datasets.** This cell downloads every file the run needs, up to six at a time. It checks each file's size where the project records it, tries each download up to four times in total, and unpacks the zip archives into `/content/data/raw` on the machine's own disk. That folder is never synced to Google Drive, so no dataset is copied anywhere else. Smoke mode still downloads about 8.7 GB, because WIDER FACE and each DigiFace part come as single large archives. Microsoft's DigiFace server is slow, about 5 MB/s for each file, and a smoke run on an L4 took 763 seconds for this cell. The cell prints one line for each dataset in the fixed order of its list, with WIDER first and DigiFace and the London set last. A line therefore appears only when that dataset and every dataset above it have finished. The cell then writes `data_manifest.json`, which lists every source with its address, its licence and the number of images unpacked from each archive, and it prints the licence of each source. The parquet and text files are recorded with a count of zero, because they are not unpacked. A good result is a line for every dataset with a size above zero. The Face Research Lab London Set is downloaded only for one expression check in section 8, and this notebook never uses it to identify anyone.
+""")
 code("""
 LONDON = [sources.LONDON_NEUTRAL, sources.LONDON_SMILING]
 WIDER_SPLIT = datasets.Source(name="wider_split", url=f"{sources.HF}/CUHK-CSE/wider_face/resolve/main/data/wider_face_split.zip",
@@ -158,8 +178,11 @@ print(f"{'dataset':22s} licence"); [print(f"{s['name']:22s} {s['licence']}") for
 SUMMARY["datasets"] = [{"name": s["name"], "licence": s["licence"], "url": s["url"]} for s in manifest["sources"]]
 """)
 
+md("""
+**Check the third-party copies against the official boxes.** Two files come from copies that other people uploaded to Hugging Face. One holds the landmark annotations that the authors of the RetinaFace detector made for the WIDER training photos. The other is a parquet file, a compressed table format, of the WIDER validation photos. A copy can have been altered or shifted, so this cell compares their face boxes with the official WIDER FACE box lists, photo by photo, allowing one pixel of difference. A good result is two PASS lines with at least 97% of the photos agreeing. In the full run the RetinaFace labels matched in 12,880 of 12,880 photos, and the validation copy matched in 398 of the 400 photos checked.
+""")
 code("""
-# Integrity checks: the third-party mirrors must agree with the official WIDER FACE boxes (SPEC-001, review change 2).
+# Integrity checks: the third-party mirrors must agree with the official WIDER FACE boxes.
 split_dir = next((RAW / "wider_split").rglob("wider_face_train_bbx_gt.txt")).parent
 official_train = {Path(r["path"]).name: r for r in parse_wider_official(split_dir / "wider_face_train_bbx_gt.txt")}
 official_val = {Path(r["path"]).name: r for r in parse_wider_official(split_dir / "wider_face_val_bbx_gt.txt")}
@@ -182,7 +205,11 @@ for rec in prepare.wider_val_records(RAW / sources.WIDER_VAL.filename, max_items
 check("WIDER validation parquet agrees with official boxes", n_val_ok >= 0.97 * max(1, n_val_checked), f"{n_val_ok}/{n_val_checked} images")
 """)
 
-md("## 3. Identity data: DigiFace-1M arrays, split by identity")
+md("""
+## 3. Identity data: DigiFace-1M arrays, split by identity
+
+**Prepare the identity images and split them by person.** DigiFace-1M provides 72 images for each synthetic identity. This cell decides which identities are used for training, which are held back for validation to choose the thresholds, and which are kept for the final test. It splits by identity, so that all the images of one person stay in one group. It also takes the test identities from a separate DigiFace part, identities 8000 to 9999. It then decodes the PNG images once into arrays on disk, so that training does not decode image files on every pass. Look for two PASS lines, which confirm that no identity is shared between the groups, and a figure with eight images each of three identities. The figure shows what the identity model learns from: the same rendered face in different poses and lighting.
+""")
 code("""
 id_paths, id_names = [], []
 for part in CFG["digiface_train"]:
@@ -216,6 +243,9 @@ for row, identity in enumerate(np.random.default_rng(0).choice(len(train_ids), 3
 plt.suptitle("DigiFace-1M: three synthetic identities, eight images each"); savefig("digiface_samples")
 """)
 
+md("""
+**Check that the identity model can learn at all, before the long run.** Two quick tests catch most mistakes in how the data, the model and the loss are connected. The first test switches off the two CosFace settings: the margin, which lowers the correct person's score, and the scale, which multiplies every score. An untrained model is then equally unsure about every identity, so its loss on the first batch should be close to the natural log of the number of identities, about 8.2 for the 3,600 training identities of the full run. A very different value means that the labels or the input scaling are wrong. The second test trains a small model for 200 steps on 16 images and requires its loss to fall below a tenth of its starting value. A model that cannot memorise 16 images has a bug in its data, its model code or its loss. The 16 images are the first ones with a label below 4, and because the arrays store each person's images together, they usually all show one person, which makes this second test weaker than it looks. Both tests print PASS or FAIL with the measured numbers.
+""")
 code("""
 # Sanity checks before the identity run: with scale 1 and no margin the first loss is ln(classes); one batch overfits.
 torch.manual_seed(0)
@@ -233,6 +263,9 @@ check("identity model overfits one batch", curve[-1] < 0.1 * curve[0], f"loss {c
 del probe; torch.cuda.empty_cache() if torch.cuda.is_available() else None
 """)
 
+md("""
+**Start the identity training in the background.** Training the identity model and then the detector one after the other would take close to two hours. The identity training therefore runs as a separate program, `train.py`, on the same GPU while the notebook trains the detector. This cell starts that program and returns at once. The program measures its own speed and plans the epochs that fit in `ID_BUDGET_MIN` minutes. It writes checkpoints so that it can resume after an interruption, and it writes its log to `identity_train.log` in the run folder. A good result is a line with the process number and the command that was started. Section 9 waits for the program to finish and then tests the model.
+""")
 code("""
 # Start identity training as a second process on the same GPU; the notebook trains the detector meanwhile.
 ID_RUN = RUN / "identity"
@@ -248,7 +281,11 @@ else:
     print("identity training started, process", id_proc.pid); print(" ".join(id_cmd))
 """)
 
-md("## 4. Detector: train on WIDER FACE")
+md("""
+## 4. Detector: train on WIDER FACE
+
+**Split the detector's photos and look at the training targets.** The detector learns from the WIDER training photos with the RetinaFace annotations. These give each face a box, and just under half of the faces (47% in the full run) also get five landmark points. This cell holds back 5% of the training photos, which measure the detector after every epoch and later choose its score threshold, and it checks that no photo is in both groups. It then shows eight training photos after augmentation, the random changes that help the detector cope with different framings and lighting. Each photo gets a random square crop of 30% to 100% of its short side, resized to 640 pixels, a horizontal flip half of the time, and random changes of brightness, contrast, saturation and hue about half of the time. Over each photo the cell draws the heatmap target, the coloured blobs at the face centres that the detector learns to predict, and the five landmark targets: the eyes in red and green, the nose in blue and the mouth corners in yellow and magenta. In the figure every face should carry a blob. The red point must stay on the eye on the left of the image even in flipped photos, which shows that the landmark order survives the flip.
+""")
 code("""
 records = retina if not CFG["wider_train_max"] else retina[: CFG["wider_train_max"]]
 det_train, det_val = split_records(records, val_fraction=0.05, seed=0)
@@ -281,6 +318,9 @@ for ax, i in zip(axes.flat, range(8)):
 plt.suptitle("Augmented detector training samples: heatmap targets and decoded landmark targets"); savefig("detector_train_samples")
 """)
 
+md("""
+**Check that the detector can learn, before the long run.** The detector's loss has four parts: the heatmap, the box size, the centre offset and the landmarks. It therefore has no simple expected starting value, so the first check only requires the loss on the first batch to be a finite number, and it prints each part. The second check trains on eight photos for 80 steps and requires the loss to fall below half of its starting value. That shows that the network, the targets and the loss are connected correctly.
+""")
 code("""
 # Sanity checks: the loss is finite on the first batch, and the detector overfits one batch.
 torch.manual_seed(0)
@@ -294,6 +334,9 @@ check("detector overfits one batch", curve[-1] < 0.5 * curve[0], f"loss {curve[0
 del probe
 """)
 
+md("""
+**Train the detector.** Before training, the cell times a short series of training steps and one validation pass. From those times it works out how many epochs fit in `DET_BUDGET_MIN` minutes, and it plans 30% more epochs than that, so that the clock is meant to end the run. It saves the plan, so that a resumed run keeps the same schedule. Training uses the AdamW optimiser. Its learning rate rises from near zero during a short warm-up and then falls along a cosine curve. The schedule follows both the step count and the clock, so the learning rate reaches its low end when either the planned epochs or the time budget runs out, whichever comes first. In the full run the 21 planned epochs ended after about 37 of the 40 minutes. After each epoch the cell measures average precision (AP) on the first 300 held-out photos (60 in smoke mode), shrunk to at most 640 pixels on the long side, and it keeps the best checkpoint. AP summarises the trade-off between finding faces and raising false alarms. An AP of 1.0 means that, when the detections are taken in order of confidence, every face is found before the first false alarm. The cell first prints the measured speed, including how many images per second the GPU trains on, and then a log line every 50 steps. A good result is a held-out AP that rises over the epochs. One reason this AP is lower than the test AP in section 5 is that these photos are shrunk to 640 pixels.
+""")
 code("""
 DET_RUN = RUN / "detector"; DET_RUN.mkdir(exist_ok=True)
 torch.manual_seed(0)
@@ -327,6 +370,9 @@ SUMMARY["detector_training"] = {"planned_epochs": det_epochs, "epochs_run": len(
                                 "annealed": json.loads((DET_RUN / "metrics.json").read_text()).get("annealed")}
 """)
 
+md("""
+**Plot the detector's training curves.** This cell draws three curves over the epochs: the loss of the last training batch of each epoch, the held-out AP, and the learning rate at the end of each epoch. In a good run the loss falls, the AP rises and then levels off, and the learning rate falls smoothly towards zero. The plot shows no warm-up rise, because the warm-up ends within the first epoch and the plot has one point per epoch. A held-out AP that falls while the training loss keeps falling would mean that the detector is memorising its training photos. The `plot_history` helper defined here draws the same kind of figure for the other two models later.
+""")
 code("""
 def plot_history(history, keys, title, name):
     fig, axes = plt.subplots(1, len(keys), figsize=(5 * len(keys), 3.4))
@@ -342,7 +388,11 @@ step_log = [l for l in (DET_RUN.parent / "detector").glob("*.jsonl")]
 print("detector epochs:", len(det_hist), "best held-out AP:", det_result.best_value)
 """)
 
-md("## 5. Detector: test on WIDER FACE validation (easy, medium, hard)")
+md("""
+## 5. Detector: test on WIDER FACE validation (easy, medium, hard)
+
+**Test the detector.** The cell loads the best checkpoint and chooses the score threshold, the confidence above which a detection counts as a face. It picks the threshold with the best F1 score on the held-out training photos, so the test photos play no part in the choice. It measures the landmark error, printed as NME, on held-out faces: the average distance from the true points divided by the size of the face box. A value of 0.05 means that the points miss by 5% of the face size on average, and a smaller value is better. It then runs the detector on the WIDER FACE validation photos, shrinking any photo whose longer side exceeds 1,280 pixels, and scores it with the official easy, medium and hard face lists. Easy faces are large and clear, and hard faces are small, blurred or partly hidden. The targets are an AP of 0.85, 0.80 and 0.55, and the full run reached 0.857, 0.845 and 0.753. For comparison, the cell prints the published figures of YuNet, a small open detector. Our scoring code differs from the official WIDER FACE scoring tool, however, so the comparison is only approximate. A PASS line confirms that the official face lists count their faces from zero, as the scoring code assumes. Lists that counted from one would attach the easy, medium and hard labels to the wrong faces. A figure shows six test photos with our detections in green and the true boxes dashed in white. The last line reports how far, in pixels of a 112-pixel crop, our detector puts DigiFace's landmarks from the template positions that the alignment step expects. A small distance means that the faces our pipeline aligns look like the crops the identity model trained on, which section 9 tests.
+""")
 code("""
 det_model = engine.load_best(FaceDetNet("resnet18", pretrained_backbone=False), DET_RUN, DEVICE)
 # Score threshold for the photo pipeline: chosen on the held-out TRAINING images, never on the test set.
@@ -412,7 +462,11 @@ print(f"DigiFace: face found in {len(errs)} of {min(500, len(test_labels))} imag
 SUMMARY["digiface_alignment_px"] = float(np.mean(errs)) if errs else None
 """)
 
-md("## 6. Expression data: EmoNet-Face portraits aligned with our detector")
+md("""
+## 6. Expression data: EmoNet-Face portraits aligned with our detector
+
+**Cut out and align the expression portraits.** The expression model must see faces the way the finished pipeline will show them. Each EmoNet-Face portrait therefore goes through our own detector. The cell finds the face, uses its five landmarks to rotate and scale it to a standard position, and keeps a crop of 224 by 224 pixels. Portraits in which the detector finds no face are dropped. EmoNet-Face comes in two sets. The model trains on the Binary set, and the HQ set, which experts rated in more detail, is kept apart as a second test. The cell removes every HQ image or prompt that also appears in the Binary set. It then splits the Binary portraits 70%, 15% and 15% into training, validation and test, grouped by the text prompt that generated them, because portraits from one prompt look alike and would otherwise leak between the groups. Look for two PASS lines, the class counts for each group (some classes, such as anger, have very few images), and a figure with eight aligned crops for each class. In smoke mode, portraits without a detected face are centre-cropped instead, because the briefly trained detector finds few faces.
+""")
 code("""
 detector = FaceDetector.from_torch(det_model, device=str(DEVICE), score_threshold=max(0.3, thr["threshold"] - 0.1), max_side=640)
 detect_fn = detector.as_detect_fn()
@@ -453,7 +507,11 @@ for r, c in enumerate(CLASSES):
 plt.suptitle("Aligned EmoNet-Face training crops by class"); savefig("expression_samples")
 """)
 
-md("## 7. Expression: train")
+md("""
+## 7. Expression: train
+
+**Check and train the expression model.** Two quick checks come first. The classifier starts from ImageNet weights, but its final layer is new and untrained, so its first-batch loss over eight classes should be about the natural log of 8, which is 2.08. The model must also memorise one batch of 32 portraits within 60 steps, with its loss falling below a tenth of its starting value. The cell then measures the training speed, plans the epochs that fit in `EXPR_BUDGET_MIN` minutes, and trains ConvNeXt-Tiny with the AdamW optimiser. After each epoch it measures the validation loss, accuracy and macro-F1, and it keeps the checkpoint with the best macro-F1. The F1 score of a class combines how many of that class's faces the model finds and how many of its answers for that class are right. Macro-F1 averages the F1 score of each class, so a rare class such as anger counts as much as a common one. A good result is a validation macro-F1 that rises over the epochs in the figure of the three validation curves at the end of the cell.
+""")
 code("""
 torch.manual_seed(0)
 probe = ExpressionNet(len(CLASSES), "convnext_tiny", pretrained=True).to(DEVICE)
@@ -487,7 +545,11 @@ SUMMARY["expression_training"] = {"epochs": expr_epochs, "status": expr_result.s
                                   "best_epoch": expr_result.best_epoch}
 """)
 
-md("## 8. Expression: test")
+md("""
+## 8. Expression: test
+
+**Test the expression model on synthetic and on real faces.** The cell loads the best checkpoint and first fits a single number, the temperature, on the validation portraits. Dividing the model's scores by it makes the probabilities match how often the model is right, so that about 80% of the faces labelled "happy 0.80" really are happy. It then scores the test portraits and prints accuracy and macro-F1 with 95% confidence intervals and the F1 of each class. It also prints the calibration error (ECE), the average gap between the stated probability and the share of answers that are right, before and after the temperature is applied, and the error should be lower after. A confusion matrix shows which expressions are mistaken for which. Two harder tests follow. The HQ set has expert ratings, and none of its images or prompts appears in the Binary set that the model trained on. The London set has real photos of 102 people, one neutral and one smiling each. For the London set the cell only counts how often a smiling photo is called happy and a neutral one neutral, and it saves no image of them. A model that has learned expressions in general scores close to its main test result on the HQ set and calls most of the London smiling photos happy. The target is a test macro-F1 of 0.70. The full run reached 0.66, and only 15% of the real smiling photos were called happy, so the model does not yet transfer to real faces. The last figure shows 24 test portraits, with the prediction in green when it is right and in red when it is wrong.
+""")
 code("""
 expr_model = engine.load_best(ExpressionNet(len(CLASSES), "convnext_tiny", pretrained=False), EXPR_RUN, DEVICE)
 val_logits, val_y = predict_logits(expr_model, arrays.ArrayDataset(ex_images, ex_labels, va_idx), DEVICE)
@@ -548,7 +610,11 @@ for ax, i in zip(axes.flat, pick):
 plt.suptitle("Expression predictions on test portraits (green right, red wrong)"); savefig("expression_test_examples")
 """)
 
-md("## 9. Identity: wait for the training process, then test on unseen identities")
+md("""
+## 9. Identity: wait for the training process, then test on unseen identities
+
+**Wait for the identity training.** The identity program started in section 3 has been training while the detector and the expression model trained. This cell waits for it to finish and prints the last two lines of its log every five minutes. It then prints the end of the log, the plan (the network depth and the number of epochs that fit the budget) and the result. The result gives the best validation true accept rate at one false accept in a thousand, the epoch that reached it, and how the run ended. The cell stops with an error if the program ended without results, and the end of its log then appears above the error. The figure plots the training loss and two validation measures. The first is the area under the ROC curve, the curve of true matches accepted against false matches accepted at every threshold, which reaches 1.0 when every same-person pair scores above every different-person pair. The second is the share of true matches accepted when one false match in a thousand is allowed. In a good run the loss falls while both measures rise.
+""")
 code("""
 waited = 0
 while id_proc is not None and id_proc.poll() is None:
@@ -566,6 +632,9 @@ plot_history(engine.load_history(ID_RUN), ["train_loss_last", "val_auc", "val_ta
 SUMMARY["identity_training"] = {"plan": id_plan, "result": id_metrics, "epochs_run": len(engine.load_history(ID_RUN))}
 """)
 
+md("""
+**Choose the thresholds and test the identity model.** The model gives two photos a cosine similarity, a number between -1 and 1 that measures how closely their embeddings point in the same direction. A threshold turns that number into a decision. The cell sets two thresholds on the validation identities only. The one-to-one threshold decides whether two photos show the same person, and it is set so that one in a thousand pairs of photos of different people is wrongly accepted. The one-to-many threshold decides whether a face gets a name from the gallery of enrolled people, and it is set so that 1% of strangers are given a name. Only then does the cell score the test identities, once (500 identities in the full run). It prints the area under the ROC curve and the equal error rate, the point where false accepts and false rejects are equally common. It also prints the true accept rate at one false accept in a thousand and in ten thousand, and rank-1, which is how often the right person is the closest match. It then runs a random 3,000 of the test images through our own detector and alignment, as the photo pipeline sees them. The target is a true accept rate of 0.80 at one false accept in a thousand. The full run reached 0.92 on DigiFace's own crops. On the random 3,000 images, the same pairs scored 0.94 on DigiFace's own crops and 0.79 through our pipeline. Two figures follow. The first shows the ROC curve and the similarity histograms of same-person and different-person pairs, and a good model shows two histograms that barely overlap. The second shows four probe faces, the photos to be identified, each with its five closest gallery matches, and a green first match means that the right person was found.
+""")
 code("""
 ID_DEPTH = id_plan.get("depth", CFG["id_depth"])
 embedder = IResNet(ID_DEPTH)
@@ -663,7 +732,11 @@ for ax in axes.flat: ax.axis("off")
 plt.suptitle("Identification: probe and its five best gallery matches (green = same identity)"); savefig("identity_examples")
 """)
 
-md("## 10. Export to ONNX, check parity, and write the model card")
+md("""
+## 10. Export to ONNX, check parity, and write the model card
+
+**Save the models for the laptop.** The three trained networks are exported to ONNX, a model file format that ONNX Runtime runs on a CPU or a GPU without PyTorch. The cell feeds the same random input to each PyTorch model and to its ONNX file and checks that the outputs agree within one part in a thousand. A good result is three PASS lines, and in the full run the outputs agreed to about one part in a million. The cell copies the PyTorch checkpoints next to the ONNX files and writes `model_card.json`. The card records each model's architecture, input size, thresholds, test results, training data, licences and known limits, so that the pipeline reads its settings from one place. Three of the datasets allow non-commercial research only, and the card says so. Finally the cell times the whole pipeline on one photo by running the ONNX files on the Colab machine's CPU, the way a laptop runs them, so the printed time is a rough guide to the time on a laptop.
+""")
 code("""
 export.export_detector(det_model.cpu(), MODELS / "detector.onnx")
 export.export_classifier(expr_model.cpu(), MODELS / "expression.onnx", 224, "logits")
@@ -711,7 +784,11 @@ card["cpu_latency_seconds"] = latency; (MODELS / "model_card.json").write_text(j
 SUMMARY["onnx_parity"] = par; SUMMARY["cpu_latency_seconds"] = latency
 """)
 
-md("## 11. The whole pipeline on photos")
+md("""
+## 11. The whole pipeline on photos
+
+**Try the gallery, then the finished pipeline.** The cell first enrols 12 unseen DigiFace identities with three photos each, in the same kind of gallery that `facekit enroll` builds. It uses the embeddings that section 9 computed from DigiFace's own crops, so this part skips our detector. It then tries to name five more photos of each enrolled identity and five photos each of 12 strangers. A good result is that most enrolled people are found with few wrong names, and that most strangers stay unnamed. The cell then loads the three ONNX files into the same `FaceAnalyzer` that `facekit scan` uses and runs it on six WIDER validation photos, so this part runs the whole pipeline from the photo onwards. The figure shows each detected face boxed in green, with its expression and that expression's probability.
+""")
 code("""
 # Enrol 12 unseen DigiFace identities with three photos each, then identify other photos of them and of 12 strangers.
 rng = np.random.default_rng(5)
@@ -740,7 +817,11 @@ for ax, img in zip(axes.flat, demo_images):
 plt.suptitle("Full pipeline from the ONNX files: faces and expressions on WIDER FACE validation photos"); savefig("pipeline_wider")
 """)
 
-md("## 12. Summary against SPEC-001")
+md("""
+## 12. Summary against the targets
+
+**Compare the results with the targets and save the summary.** The cell prints each model's result next to the target that was set before training: a detector AP of 0.85, 0.80 and 0.55 on easy, medium and hard faces, an expression macro-F1 of 0.70, and an identity true accept rate of 0.80 at one false accept in a thousand. It then lists every check of the run with PASS or FAIL, writes everything into `summary.json` in the run folder, and lists the saved model files with their sizes. In a good run the line ALL CHECKS PASSED appears just before the list of saved model files. In smoke mode the targets are not met, because the models train for only a few dozen steps, and only the checks matter.
+""")
 code("""
 targets = [("detector AP easy >= 0.85", SUMMARY["detector_test"]["ap"]["easy"], 0.85),
            ("detector AP medium >= 0.80", SUMMARY["detector_test"]["ap"]["medium"], 0.80),
