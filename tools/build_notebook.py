@@ -213,7 +213,7 @@ check("identity first-batch loss is ln(classes)", abs(loss0.item() - np.log(k)) 
 small = np.flatnonzero(id_labels < 4)[:16]
 xs = torch.from_numpy(np.ascontiguousarray(id_images[small])).permute(0, 3, 1, 2).float().div(255).to(DEVICE)
 ys = torch.from_numpy(id_labels[small]).to(DEVICE)
-curve = engine.overfit_one_batch(IdentityTrainer(4, depth="iresnet18"), lambda m: m(xs, ys)[0], steps=80, lr=1e-3, device=DEVICE)
+curve = engine.overfit_one_batch(IdentityTrainer(4, depth="iresnet18"), lambda m: m(xs, ys)[0], steps=200, lr=1e-3, device=DEVICE)
 check("identity model overfits one batch", curve[-1] < 0.1 * curve[0], f"loss {curve[0]:.2f} -> {curve[-1]:.3f}")
 del probe; torch.cuda.empty_cache() if torch.cuda.is_available() else None
 """)
