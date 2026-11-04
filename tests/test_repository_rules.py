@@ -57,3 +57,13 @@ def test_the_notebook_carries_the_pipeline_figure_from_docs_figures():
     assert "attachment:pipeline_flow.png" in source
     attached = base64.b64decode(figure["attachments"]["pipeline_flow.png"]["image/png"])
     assert attached == (ROOT / "docs" / "figures" / "pipeline_flow.png").read_bytes()
+
+
+def test_the_notebook_text_names_no_run_folder():
+    """Run and experiment folder names (such as the real run's own folder) are internal, like record numbers."""
+    folder_name = re.compile(r"\b(?:exp|run|smoke|eval-london)-\d{3}\b")
+    cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    text = lambda cell: cell["source"] if isinstance(cell["source"], str) else "".join(cell["source"])  # noqa: E731
+    found = [f"cell {i}: {m.group(0)}" for i, cell in enumerate(cells) if cell["cell_type"] == "markdown"
+             for m in folder_name.finditer(text(cell))]
+    assert found == [], "run folder names in the notebook's explanations:\n" + "\n".join(found)

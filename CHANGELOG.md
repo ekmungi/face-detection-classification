@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5 - 2026-11-04
+
+- The notebook's explanations no longer name particular run or experiment folders; the parameters cell says what
+  `EXP` and `RUN_ID` are for and where the accepted names are listed. A test keeps run folder names out of the
+  notebook's markdown cells.
+
 ## 0.2.4 - 2026-11-04
 
 - The downloaded dataset files can live in Google Drive. With the new `USE_DRIVE` parameter (on by default), the

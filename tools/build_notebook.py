@@ -61,13 +61,13 @@ Sections 3 to 9 prepare the data, train the three networks and test them. Sectio
 md("""
 ## Parameters
 
-The next cell holds the seven settings of a run. `MODE` chooses smoke or full. `EXP` and `RUN_ID` name the folder the results go into, for example `scratch/smoke-001` for a smoke run or `exp-001/run-003` for the real run that produced the current models. The three budgets set how many minutes each training is planned to take. Each training measures its own speed first and plans its epochs, the full passes over its training data, to fit its budget. The detector and identity trainings stop at their budgets, and the expression training may run up to 1.3 times its budget. `USE_DRIVE` keeps the downloaded files in Google Drive, so that they are downloaded only once (section 2). Papermill is a tool that runs a notebook from top to bottom as an ordinary program. When it runs this notebook unattended, it finds this cell by its tag `parameters` and replaces these values. To run the notebook by hand, change `MODE` here before you start. For a full run, also give `EXP` and `RUN_ID` new values, such as `exp-001` and `run-004`, so that the run writes into its own folder and does not reuse the plans of an earlier run.
+The next cell holds the seven settings of a run. `MODE` chooses smoke or full. `EXP` and `RUN_ID` name the folder inside the artifacts folder that the results go into. The three budgets set how many minutes each training is planned to take. Each training measures its own speed first and plans its epochs, the full passes over its training data, to fit its budget. The detector and identity trainings stop at their budgets, and the expression training may run up to 1.3 times its budget. `USE_DRIVE` keeps the downloaded files in Google Drive, so that they are downloaded only once (section 2). Papermill is a tool that runs a notebook from top to bottom as an ordinary program. When it runs this notebook unattended, it finds this cell by its tag `parameters` and replaces these values. To run the notebook by hand, change `MODE` here before you start. For a full run, also give `EXP` and `RUN_ID` names that no earlier run has used, so that the run writes into its own folder and does not reuse an earlier run's training plans; `paths.py` lists the names it accepts.
 """)
 code("""
 # Parameters (papermill overrides these).
 MODE = "smoke"            # "smoke": tiny subsets to test every cell; "full": the real run
-EXP = "scratch"           # exp-NNN for a real run, scratch for a smoke run
-RUN_ID = "smoke-001"      # run-NNN or smoke-NNN
+EXP = "scratch"           # the results folder: "scratch" for a smoke run (paths.py lists the accepted names)
+RUN_ID = "smoke-001"      # this run's own folder inside EXP; a real run needs a name no earlier run used
 DET_BUDGET_MIN = 50.0     # minutes for detector training
 ID_BUDGET_MIN = 55.0      # minutes for identity training (a second process on the same GPU)
 EXPR_BUDGET_MIN = 12.0    # minutes for expression training
