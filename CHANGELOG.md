@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.7 - 2026-11-04
+
+- The synced-folder guard test builds its OneDrive, Google Drive and Dropbox folders under pytest's `tmp_path`
+  instead of spelling out paths under a Windows user folder, so the repository holds no home-folder path. The
+  guard itself is unchanged.
+
 ## 0.2.6 - 2026-11-04
 
 - A third notebook mode, `MODE = "medium"`, between smoke and full: one run on a Colab L4 that gives meaningful

@@ -217,9 +217,10 @@ def test_evaluate_needs_two_people_with_two_photos():
         evaluate.evaluate_embeddings(emb, lab, None, 0.37, 0.52, n_boot=10, n_splits=2)
 
 
-def test_private_folder_guard():
-    for bad in ("C:/Users/x/OneDrive/photos", "C:/Users/x/OneDrive - Contoso/photos", "G:/My Drive/photos",
-                "C:/Users/x/Google Drive/photos", "C:/Users/x/Dropbox/photos"):
+def test_private_folder_guard(tmp_path):
+    # Synced folders are built under tmp_path, so no home folder is written into the repository.
+    for bad in (tmp_path / "OneDrive" / "photos", tmp_path / "OneDrive - Contoso" / "photos", "G:/My Drive/photos",
+                tmp_path / "Google Drive" / "photos", tmp_path / "Dropbox" / "photos"):
         with pytest.raises(SystemExit):
             evaluate.refuse_synced_folder(bad)
     evaluate.refuse_synced_folder("C:/tmp/fdc-london")       # a plain local folder is fine
