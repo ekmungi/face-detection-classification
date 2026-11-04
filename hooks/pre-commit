@@ -1,0 +1,18 @@
+#!/bin/sh
+# Blocks data, weights, embeddings, images and notebooks with outputs from the public repository (SPEC-001, rule 10).
+# Install: git config core.hooksPath hooks
+status=0
+for f in $(git diff --cached --name-only --diff-filter=AM); do
+  case "$f" in
+    *.png|*.jpg|*.jpeg|*.bmp|*.webp|*.gif|*.npy|*.npz|*.u8|*.pt|*.pth|*.onnx|*.safetensors|*.ckpt|*.parquet|*.zip|*.tar|*.gz|*.h5|*.pkl)
+      echo "pre-commit: refusing $f (data, weights or images never go in this repository)"; status=1 ;;
+  esac
+  if [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 1048576 ]; then
+    echo "pre-commit: refusing $f (larger than 1 MB)"; status=1
+  fi
+  case "$f" in
+    *.ipynb)
+      if grep -q '"output_type"' "$f"; then echo "pre-commit: refusing $f (notebook has outputs; run tools/strip_notebook_outputs.py)"; status=1; fi ;;
+  esac
+done
+exit $status

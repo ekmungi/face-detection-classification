@@ -32,6 +32,7 @@ def test_default_out_path_is_under_the_artifact_root_scratch_notebook_out(tmp_pa
     assert out == tmp_path / "art" / "scratch" / "notebook-out" / "02_pipeline.local.ipynb"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="starting a Jupyter kernel hangs on the Windows laptop; the notebook itself is tested on Colab")
 def test_cells_share_one_kernel_and_the_output_notebook_is_written(tmp_path, monkeypatch):
     monkeypatch.setenv("ARTIFACT_ROOT", str(tmp_path / "art"))
     notebook = tmp_path / "notebooks" / "nb.ipynb"
@@ -43,6 +44,7 @@ def test_cells_share_one_kernel_and_the_output_notebook_is_written(tmp_path, mon
     assert (tmp_path / "art" / "scratch" / "notebook-out" / "nb.local.ipynb").exists()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="starting a Jupyter kernel hangs on the Windows laptop; the notebook itself is tested on Colab")
 def test_a_failing_cell_stops_the_run_and_returns_status_one(tmp_path, monkeypatch):
     monkeypatch.setenv("ARTIFACT_ROOT", str(tmp_path / "art"))
     notebook = tmp_path / "notebooks" / "bad.ipynb"
