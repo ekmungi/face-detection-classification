@@ -35,9 +35,9 @@ code("""
 MODE = "smoke"            # "smoke": tiny subsets to test every cell; "full": the real run
 EXP = "scratch"           # exp-NNN for a real run, scratch for a smoke run
 RUN_ID = "smoke-001"      # run-NNN or smoke-NNN
-DET_BUDGET_MIN = 55.0     # minutes for detector training
+DET_BUDGET_MIN = 50.0     # minutes for detector training
 ID_BUDGET_MIN = 55.0      # minutes for identity training (a second process on the same GPU)
-EXPR_BUDGET_MIN = 15.0    # minutes for expression training
+EXPR_BUDGET_MIN = 12.0    # minutes for expression training
 """, tags=["parameters"])
 
 md("## 1. Setup")
@@ -108,7 +108,7 @@ CFG = {
     "full": dict(digiface_train=["0-1999", "2000-3999"], digiface_test="8000-9999", id_max_ids=None, id_val_ids=400,
                  id_max_per_id=None, id_test_ids=500, emonet_files=5, emonet_max=None, hq_files=2, hq_max=None,
                  wider_train_max=None, wider_val_max=None, det_max_steps=0, expr_max_steps=0, id_max_steps=0,
-                 id_depth="iresnet50"),
+                 id_depth="auto"),
 }[MODE]
 WORKERS_DET = max(2, CPUS - 4)       # the detector's JPEG decoding needs most of the CPU
 WORKERS_ID = 2 if CPUS <= 8 else 3   # identity reads pre-decoded arrays, so it needs few workers
@@ -535,7 +535,8 @@ SUMMARY["identity_training"] = {"plan": id_plan, "result": id_metrics}
 """)
 
 code("""
-embedder = IResNet(CFG["id_depth"])
+ID_DEPTH = id_plan.get("depth", CFG["id_depth"])
+embedder = IResNet(ID_DEPTH)
 state = torch.load(ID_RUN / ("best.pt" if (ID_RUN / "best.pt").exists() else "final.pt"), map_location="cpu", weights_only=True)["model"]
 embedder.load_state_dict({k[len("embedder."):]: v for k, v in state.items() if k.startswith("embedder.")})
 embedder = embedder.to(DEVICE).eval()
@@ -611,7 +612,7 @@ card = {
                    "input_size": 224, "temperature": TEMPERATURE, "trained_on": "EmoNet-Face Binary (synthetic), prompt-grouped split",
                    "test": SUMMARY["expression_test"],
                    "limitations": "Neutral is a proxy (Emotional Numbness, Concentration, Contemplation). Trained on synthetic portraits."},
-    "identity": {"file": "embedder.onnx", "architecture": f"{CFG['id_depth']} from scratch, CosFace s=64 m=0.35, 512-d",
+    "identity": {"file": "embedder.onnx", "architecture": f"{ID_DEPTH} from scratch, CosFace s=64 m=0.35, 512-d",
                  "input_size": 112, "threshold": ID_THRESHOLD, "threshold_rule": "FAR 1e-3 on 400 held-out synthetic identities",
                  "trained_on": f"DigiFace-1M parts {CFG['digiface_train']}", "test": SUMMARY["identity_test"],
                  "limitations": "Trained and calibrated on synthetic faces only. Accuracy on real faces was NOT measured in this run. "

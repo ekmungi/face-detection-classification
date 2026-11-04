@@ -51,6 +51,7 @@ def main(argv=None) -> int:
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--budget-minutes", type=float, default=55.0)
     p.add_argument("--max-epochs", type=int, default=40)
+    p.add_argument("--min-epochs", type=int, default=8, help="with --depth auto, the fewest epochs a depth must fit")
     p.add_argument("--max-steps", type=int, default=0, help="stop after this many steps (smoke runs)")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args(argv)
@@ -67,23 +68,34 @@ def main(argv=None) -> int:
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
         print(f"[train] using the existing plan: {plan}", flush=True)
     else:
-        probe = build_task(args, images, labels, num_train_ids)
-        seconds = engine.measure_step_seconds(probe, device, steps=40, warmup=10)
-        started = time.time()
-        probe.model.to(device).eval()
-        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=device == "cuda"):
-            probe.validate(torch.device(device))
-        val_seconds = time.time() - started
-        epochs = engine.plan_epochs(seconds, probe.steps_per_epoch, args.budget_minutes, val_seconds,
-                                    min_epochs=1, max_epochs=args.max_epochs, safety=0.75)
-        plan = {"seconds_per_step": seconds, "val_seconds": val_seconds, "steps_per_epoch": probe.steps_per_epoch,
-                "epochs": epochs, "budget_minutes": args.budget_minutes, "device": device,
-                "num_train_ids": num_train_ids, "train_images": len(probe.train_set), "val_images": len(probe.val_set)}
+        # "auto" applies SPEC-001's descoping order: the deepest network that still fits min_epochs in the budget.
+        candidates = ["iresnet50", "iresnet34", "iresnet18"] if args.depth == "auto" else [args.depth]
+        tried = []
+        for depth in candidates:
+            args_depth = argparse.Namespace(**{**vars(args), "depth": depth})
+            probe = build_task(args_depth, images, labels, num_train_ids)
+            seconds = engine.measure_step_seconds(probe, device, steps=30, warmup=8)
+            started = time.time()
+            probe.model.to(device).eval()
+            with torch.no_grad():
+                probe.validate(torch.device(device))
+            val_seconds = time.time() - started
+            epochs = engine.plan_epochs(seconds, probe.steps_per_epoch, args.budget_minutes, val_seconds,
+                                        min_epochs=1, max_epochs=args.max_epochs, safety=0.75)
+            tried.append({"depth": depth, "seconds_per_step": seconds, "epochs": epochs})
+            print(f"[train] {depth}: {seconds:.3f} s per step, validation {val_seconds:.0f} s -> {epochs} epochs", flush=True)
+            plan = {"depth": depth, "seconds_per_step": seconds, "val_seconds": val_seconds,
+                    "steps_per_epoch": probe.steps_per_epoch, "epochs": epochs, "budget_minutes": args.budget_minutes,
+                    "device": device, "num_train_ids": num_train_ids, "train_images": len(probe.train_set),
+                    "val_images": len(probe.val_set), "tried": tried}
+            del probe
+            if device == "cuda":
+                torch.cuda.empty_cache()
+            if epochs >= args.min_epochs:
+                break
         plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
         print(f"[train] plan: {plan}", flush=True)
-        del probe
-        if device == "cuda":
-            torch.cuda.empty_cache()
+    args.depth = plan.get("depth", args.depth)
 
     task = build_task(args, images, labels, num_train_ids)
     cfg = engine.TrainConfig(epochs=plan["epochs"], lr=args.lr, weight_decay=args.weight_decay, optimizer="sgd",

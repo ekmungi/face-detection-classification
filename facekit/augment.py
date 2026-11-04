@@ -107,11 +107,15 @@ def _augment(images: torch.Tensor, cfg: AugmentConfig, generator: torch.Generato
             small = F.interpolate(x[pick], size=(size // 3, size // 3), mode="bilinear", align_corners=False)
             x[pick] = F.interpolate(small, size=(size, size), mode="bilinear", align_corners=False)
     if cfg.erase:
-        pick = _bernoulli(n, cfg.erase, generator, device)
+        # One random square per picked image, built as a mask so the GPU never waits on the CPU.
+        pick = _bernoulli(n, cfg.erase, generator, device).view(n, 1, 1, 1)
         size = x.shape[-1]
-        for i in torch.nonzero(pick).flatten().tolist():
-            side = int(size * float(_uniform(1, 0.15, 0.35, generator, device)))
-            top = int(float(_uniform(1, 0, size - side, generator, device)))
-            left = int(float(_uniform(1, 0, size - side, generator, device)))
-            x[i, :, top:top + side, left:left + side] = float(_uniform(1, 0, 1, generator, device))
+        side = (_uniform(n, 0.15, 0.35, generator, device) * size).view(n, 1, 1, 1)
+        top = (_uniform(n, 0, 1, generator, device).view(n, 1, 1, 1) * (size - side))
+        left = (_uniform(n, 0, 1, generator, device).view(n, 1, 1, 1) * (size - side))
+        rows = torch.arange(size, device=device).view(1, 1, size, 1)
+        cols = torch.arange(size, device=device).view(1, 1, 1, size)
+        inside = (rows >= top) & (rows < top + side) & (cols >= left) & (cols < left + side) & pick
+        fill = _uniform(n, 0, 1, generator, device).view(n, 1, 1, 1)
+        x = torch.where(inside, fill, x)
     return x.clamp_(0.0, 1.0)
