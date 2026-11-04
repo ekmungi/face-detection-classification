@@ -179,10 +179,8 @@ test_ids = sorted(set(test_names))[: CFG["id_test_ids"]]
 test_label = {name: i for i, name in enumerate(test_ids)}
 started = time.time()
 if not arrays.array_exists(ARR, "digiface_train"):
-    d = prepare.build_digiface_array(id_paths, id_names, train_ids + val_ids, ARR, "digiface_train", label_of,
-                                     max_per_id=CFG["id_max_per_id"], workers=CPUS)
-    d["num_train_ids"] = len(train_ids)
-    (ARR / "digiface_train.json").write_text(json.dumps(d))
+    prepare.build_digiface_array(id_paths, id_names, train_ids + val_ids, ARR, "digiface_train", label_of,
+                                 max_per_id=CFG["id_max_per_id"], workers=CPUS, extra_meta={"num_train_ids": len(train_ids)})
 if not arrays.array_exists(ARR, "digiface_test"):
     prepare.build_digiface_array(test_paths, test_names, test_ids, ARR, "digiface_test", test_label, workers=CPUS)
 id_images, id_labels, id_desc = arrays.read_array(ARR, "digiface_train")
@@ -282,12 +280,13 @@ del probe
 """)
 
 code("""
-DET_RUN = RUN / "detector"
+DET_RUN = RUN / "detector"; DET_RUN.mkdir(exist_ok=True)
+torch.manual_seed(0)
 det_model = FaceDetNet("resnet18", pretrained_backbone=True)
 det_task = DetectorTask(det_model, det_train, det_val, WIDER_IMAGES, size=640, batch_size=32, num_workers=WORKERS_DET,
                         val_images=60 if SMOKE else 300)
-if (DET_RUN / "DONE").exists() or (SMOKE and (DET_RUN / "metrics.json").exists()):
-    det_epochs = json.loads((DET_RUN / "config.json").read_text())["train"]["epochs"]
+if (DET_RUN / "plan.json").exists():           # a resumed run keeps its plan, so its schedule does not change
+    det_epochs = json.loads((DET_RUN / "plan.json").read_text())["epochs"]
 else:
     probe_task = DetectorTask(FaceDetNet("resnet18", pretrained_backbone=True), det_train, det_val, WIDER_IMAGES,
                               batch_size=32, num_workers=WORKERS_DET, val_images=60 if SMOKE else 300)
@@ -295,17 +294,22 @@ else:
     t0 = time.time(); probe_task.model.eval()
     with torch.no_grad(): probe_task.validate(DEVICE)
     val_sec = time.time() - t0
-    det_epochs = engine.plan_epochs(sec, det_task.steps_per_epoch, DET_BUDGET_MIN, val_sec, min_epochs=1, max_epochs=150)
+    fit_epochs = engine.plan_epochs(sec, det_task.steps_per_epoch, DET_BUDGET_MIN, val_sec, min_epochs=1, max_epochs=150, safety=1.0)
+    det_epochs = max(1, int(round(fit_epochs * 1.3)))   # the time-aware schedule ends the run at the budget, annealed
     print(f"detector: {sec:.3f} s per step of 32 images ({32 / sec:.0f} images/s), validation {val_sec:.0f} s, "
-          f"{det_task.steps_per_epoch} steps per epoch -> {det_epochs} epochs in {DET_BUDGET_MIN:.0f} minutes")
+          f"{det_task.steps_per_epoch} steps per epoch -> about {fit_epochs} epochs fit in {DET_BUDGET_MIN:.0f} minutes")
+    (DET_RUN / "plan.json").write_text(json.dumps({"seconds_per_step": sec, "val_seconds": val_sec, "epochs": det_epochs,
+                                                   "fit_epochs": fit_epochs, "budget_minutes": DET_BUDGET_MIN}))
     SUMMARY["detector_speed"] = {"seconds_per_step": sec, "images_per_second": 32 / sec, "val_seconds": val_sec}
     del probe_task
 det_cfg = engine.TrainConfig(epochs=det_epochs, lr=5e-4, weight_decay=1e-4, optimizer="adamw", warmup_epochs=min(1.0, det_epochs / 5),
                              min_lr_ratio=0.002, grad_clip=10.0, checkpoint_every=300, log_every=50,
-                             max_steps=CFG["det_max_steps"], max_minutes=DET_BUDGET_MIN * 1.1)
+                             max_steps=CFG["det_max_steps"], max_minutes=DET_BUDGET_MIN, time_schedule=True)
 det_result = engine.fit(det_task, det_cfg, DET_RUN, device=DEVICE, extra_config={"model": "FaceDetNet resnet18", "size": 640})
-SUMMARY["detector_training"] = {"epochs": det_epochs, "status": det_result.status, "best_val_ap": det_result.best_value,
-                                "best_epoch": det_result.best_epoch}
+SUMMARY["detector_training"] = {"planned_epochs": det_epochs, "epochs_run": len(engine.load_history(DET_RUN)),
+                                "status": det_result.status, "best_val_ap": det_result.best_value,
+                                "best_epoch": det_result.best_epoch,
+                                "annealed": json.loads((DET_RUN / "metrics.json").read_text()).get("annealed")}
 """)
 
 code("""
@@ -327,32 +331,41 @@ md("## 5. Detector: test on WIDER FACE validation (easy, medium, hard)")
 code("""
 det_model = engine.load_best(FaceDetNet("resnet18", pretrained_backbone=False), DET_RUN, DEVICE)
 # Score threshold for the photo pipeline: chosen on the held-out TRAINING images, never on the test set.
-val_pred, val_true = predict_records(det_model, det_val, WIDER_IMAGES, DEVICE, max_side=1280)
+EVAL_SIDE = 1280   # the same resolution for the threshold (validation), the test and the photo pipeline
+val_pred, val_true = predict_records(det_model, det_val, WIDER_IMAGES, DEVICE, max_side=EVAL_SIDE)
 thr = choose_score_threshold(val_pred, val_true)
 print("chosen detection threshold on held-out training images:", thr)
 # Landmark error on held-out training images that carry landmarks.
-nme_list = []
+nme_list = []   # one value per matched face that has landmark annotations
 for rec in det_val[:300]:
     gt_lm = rec["landmarks"]; ok = np.isfinite(gt_lm[:, 0, 0])
     if not ok.any(): continue
-    faces = detect_image(det_model, prepare.read_rgb(WIDER_IMAGES / rec["path"]), device=DEVICE, max_side=1280, score_threshold=0.3)
+    faces = detect_image(det_model, prepare.read_rgb(WIDER_IMAGES / rec["path"]), device=DEVICE, max_side=EVAL_SIDE, score_threshold=0.3)
     if not faces: continue
     pb = np.array([f["box"] for f in faces]); pl = np.array([f["landmarks"] for f in faces])
-    pi, gi = det_eval.match_boxes(pb, rec["boxes"][ok])
-    if len(pi): nme_list.append(det_eval.landmark_nme(pl[pi], gt_lm[ok][gi], rec["boxes"][ok][gi]))
+    pi, gi = det_eval.match_boxes(pb, rec["boxes"])        # match against every face, then keep those with landmarks
+    for a, b in zip(pi, gi):
+        if ok[b]: nme_list.append(det_eval.landmark_nme(pl[[a]], gt_lm[[b]], rec["boxes"][[b]]))
 nme = float(np.nanmean(nme_list)) if nme_list else float("nan")
+print(f"landmark error measured on {len(nme_list)} faces")
 print(f"landmark error (NME, normalised by box size) on held-out training images: {nme:.4f}")
 
 # Test: WIDER FACE validation, VOC-style AP with the official easy/medium/hard face lists.
 preds, truths, examples, demo_images = [], [], [], []
 t0 = time.time()
+keep_in_range, keep_has_zero = True, False
 for n, rec in enumerate(prepare.wider_val_records(RAW / sources.WIDER_VAL.filename, max_items=CFG["wider_val_max"])):
-    faces = detect_image(det_model, rec["image"], device=DEVICE, max_side=1600, score_threshold=0.02)
+    for subset in ("easy", "medium", "hard"):
+        k = rec["keep"][subset]
+        keep_in_range &= bool(np.all((k >= 0) & (k < len(rec["boxes"]))))
+        keep_has_zero |= bool(np.any(k == 0))
+    faces = detect_image(det_model, rec["image"], device=DEVICE, max_side=EVAL_SIDE, score_threshold=0.02)
     preds.append((np.array([f["box"] for f in faces], dtype=np.float32).reshape(-1, 4), np.array([f["score"] for f in faces], dtype=np.float32)))
     truths.append({"boxes": rec["boxes"], "keep": rec["keep"]})
     if n < 6: examples.append((rec["image"], [f for f in faces if f["score"] >= thr["threshold"]], rec["boxes"]))
     if 6 <= n < 12: demo_images.append(rec["image"])
 print(f"{len(truths)} test images in {time.time() - t0:.0f} s")
+check("WIDER subset lists are 0-based and in range", keep_in_range and keep_has_zero, "every index < number of faces; index 0 occurs")
 det_test = {}
 for subset in ("easy", "medium", "hard"):
     gts = []
@@ -391,18 +404,20 @@ detect_fn = detector.as_detect_fn()
 binary_paths = [RAW / s.filename for s in sources.EMONET_BINARY[: CFG["emonet_files"]]]
 hq_paths = [RAW / s.filename for s in sources.EMONET_HQ[: CFG["hq_files"]]]
 t0 = time.time()
-if not arrays.array_exists(ARR, "emonet_binary"):
+ARR_RUN = ARR / RUN_ID   # these crops depend on this run's detector, so they are never shared between runs
+if not arrays.array_exists(ARR_RUN, "emonet_binary"):
     sel = prepare.emonet_selection(binary_paths, max_items=CFG["emonet_max"])
     print("usable EmoNet-Face Binary images:", len(sel))
-    prepare.build_emonet_array(binary_paths, sel, detect_fn, ARR, "emonet_binary", 224, fallback_center_crop=SMOKE)
-ex_images, ex_labels, ex_desc = arrays.read_array(ARR, "emonet_binary")
-if not arrays.array_exists(ARR, "emonet_hq"):
+    prepare.build_emonet_array(binary_paths, sel, detect_fn, ARR_RUN, "emonet_binary", 224, fallback_center_crop=SMOKE)
+ex_images, ex_labels, ex_desc = arrays.read_array(ARR_RUN, "emonet_binary")
+if not arrays.array_exists(ARR_RUN, "emonet_hq"):
     sel_hq = prepare.emonet_selection(hq_paths, hq=True, max_items=CFG["hq_max"])
-    prepare.build_emonet_array(hq_paths, sel_hq, detect_fn, ARR, "emonet_hq", 224, exclude_hashes=set(ex_desc["ids"]),
-                               fallback_center_crop=SMOKE)
-hq_images, hq_labels, hq_desc = arrays.read_array(ARR, "emonet_hq")
+    prepare.build_emonet_array(hq_paths, sel_hq, detect_fn, ARR_RUN, "emonet_hq", 224, exclude_hashes=set(ex_desc["ids"]),
+                               fallback_center_crop=SMOKE, exclude_prompts=set(ex_desc["groups"]))
+hq_images, hq_labels, hq_desc = arrays.read_array(ARR_RUN, "emonet_hq")
 print(f"aligned in {time.time() - t0:.0f} s. Binary: {len(ex_labels)} kept, {ex_desc['no_face']} without a face, "
-      f"{ex_desc['fallback']} centre-cropped (smoke only). HQ: {len(hq_labels)} kept, {hq_desc['duplicates']} duplicates of Binary removed")
+      f"{ex_desc['fallback']} centre-cropped (smoke only). HQ: {len(hq_labels)} kept, {hq_desc['duplicates']} duplicates of Binary "
+      f"and {hq_desc.get('shared_prompt', 0)} sharing a Binary prompt removed")
 check("HQ test shares no image with Binary", arrays.split_overlap(ex_desc["ids"], hq_desc["ids"]) == 0, "by SHA-1 of the image bytes")
 tr_idx, va_idx, te_idx = arrays.grouped_split(ex_labels, ex_desc["groups"], (0.7, 0.15, 0.15), seed=0)
 groups = np.asarray(ex_desc["groups"])
@@ -435,20 +450,22 @@ curve = engine.overfit_one_batch(probe, lambda m: torch.nn.functional.cross_entr
 check("expression model overfits one batch", curve[-1] < 0.1 * curve[0], f"loss {curve[0]:.2f} -> {curve[-1]:.3f}")
 del probe
 
-EXPR_RUN = RUN / "expression"
+EXPR_RUN = RUN / "expression"; EXPR_RUN.mkdir(exist_ok=True)
+torch.manual_seed(0)
 expr_model = ExpressionNet(len(CLASSES), "convnext_tiny", pretrained=True)
 expr_task = ExpressionTask(expr_model, ex_images, ex_labels, tr_idx, va_idx, len(CLASSES), batch_size=64, num_workers=4)
-if (EXPR_RUN / "DONE").exists() or (SMOKE and (EXPR_RUN / "metrics.json").exists()):
-    expr_epochs = json.loads((EXPR_RUN / "config.json").read_text())["train"]["epochs"]
+if (EXPR_RUN / "plan.json").exists():
+    expr_epochs = json.loads((EXPR_RUN / "plan.json").read_text())["epochs"]
 else:
     probe_task = ExpressionTask(ExpressionNet(len(CLASSES), "convnext_tiny", pretrained=True), ex_images, ex_labels, tr_idx, va_idx,
                                 len(CLASSES), batch_size=64, num_workers=4)
     sec = engine.measure_step_seconds(probe_task, DEVICE, steps=10 if SMOKE else 30, warmup=3 if SMOKE else 5)
     expr_epochs = engine.plan_epochs(sec, expr_task.steps_per_epoch, EXPR_BUDGET_MIN, 20, min_epochs=1, max_epochs=30)
     print(f"expression: {sec:.3f} s per step of 64 -> {expr_epochs} epochs in {EXPR_BUDGET_MIN:.0f} minutes"); del probe_task
+    (EXPR_RUN / "plan.json").write_text(json.dumps({"seconds_per_step": sec, "epochs": expr_epochs, "budget_minutes": EXPR_BUDGET_MIN}))
 expr_cfg = engine.TrainConfig(epochs=expr_epochs, lr=2e-4, weight_decay=0.05, optimizer="adamw", warmup_epochs=min(1.0, expr_epochs / 5),
                               grad_clip=5.0, checkpoint_every=200, log_every=50, max_steps=CFG["expr_max_steps"],
-                              max_minutes=EXPR_BUDGET_MIN * 1.2)
+                              max_minutes=EXPR_BUDGET_MIN * 1.3, time_schedule=True)
 expr_result = engine.fit(expr_task, expr_cfg, EXPR_RUN, device=DEVICE, extra_config={"model": "ExpressionNet convnext_tiny", "size": 224})
 plot_history(engine.load_history(EXPR_RUN), ["val_loss", "val_accuracy", "val_macro_f1"], "Expression training", "expression_curves")
 SUMMARY["expression_training"] = {"epochs": expr_epochs, "status": expr_result.status, "best_val_macro_f1": expr_result.best_value,
@@ -531,7 +548,7 @@ if not (ID_RUN / "metrics.json").exists():
 id_plan = json.loads((ID_RUN / "plan.json").read_text()); id_metrics = json.loads((ID_RUN / "metrics.json").read_text())
 print("plan:", id_plan); print("result:", id_metrics)
 plot_history(engine.load_history(ID_RUN), ["train_loss_last", "val_auc", "val_tar@far=0.001"], "Identity training", "identity_curves")
-SUMMARY["identity_training"] = {"plan": id_plan, "result": id_metrics}
+SUMMARY["identity_training"] = {"plan": id_plan, "result": id_metrics, "epochs_run": len(engine.load_history(ID_RUN))}
 """)
 
 code("""
@@ -546,7 +563,28 @@ val_emb, val_lab = embed(embedder, arrays.ArrayDataset(id_images, id_labels, val
 vp, vs = metrics.verification_pairs(val_lab, 3000, 30000, seed=1)
 val_rep = metrics.verification_report(metrics.cosine_scores(val_emb, vp), vs, fars=(1e-3,))
 ID_THRESHOLD = val_rep["threshold@far=0.001"]
-print(f"identity threshold chosen on validation identities at FAR 1e-3: {ID_THRESHOLD:.4f}")
+print(f"1:1 identity threshold chosen on validation identities at FAR 1e-3: {ID_THRESHOLD:.4f}")
+
+def open_set(emb, lab, threshold=None, seed=7, n_enrol=3, n_probe=10, fpir=0.01):
+    # Enrol half the identities (template = mean of n_enrol photos); probe with other photos of them (genuine) and
+    # with photos of the other half (strangers). Choose or apply the threshold at which `fpir` of strangers get a name.
+    ids = np.unique(lab); r = np.random.default_rng(seed); r.shuffle(ids)
+    enrolled, strangers = ids[: len(ids) // 2], ids[len(ids) // 2:]
+    tmpl = np.stack([emb[lab == v][:n_enrol].mean(0) for v in enrolled]); tmpl /= np.linalg.norm(tmpl, axis=1, keepdims=True)
+    gen = [(emb[lab == v][n_enrol:n_enrol + n_probe], i) for i, v in enumerate(enrolled)]
+    gp = np.concatenate([g for g, _ in gen]); gi = np.concatenate([np.full(len(g), i) for g, i in gen])
+    sp = np.concatenate([emb[lab == v][:n_probe] for v in strangers])
+    s_best = (sp @ tmpl.T).max(1); g_sims = gp @ tmpl.T
+    if threshold is None:
+        threshold = float(np.quantile(s_best, 1.0 - fpir))
+    named_right = (g_sims.argmax(1) == gi) & (g_sims.max(1) >= threshold)
+    return {"threshold": threshold, "gallery_size": int(len(enrolled)), "fpir": float((s_best >= threshold).mean()),
+            "fnir": float(1.0 - named_right.mean()), "rank1": float((g_sims.argmax(1) == gi).mean())}
+
+val_open = open_set(val_emb, val_lab)
+ID_THRESHOLD_1N = val_open["threshold"]
+print(f"1:N gallery threshold chosen on validation identities (1% of strangers named, gallery of {val_open['gallery_size']}): "
+      f"{ID_THRESHOLD_1N:.4f}")
 
 # The test part is scored once, after every choice above.
 te_emb, te_lab = embed(embedder, arrays.ArrayDataset(test_images, test_labels), DEVICE)
@@ -564,8 +602,32 @@ print(f"TEST verification: AUC {te_rep['auc']:.4f}, EER {te_rep['eer']:.4f}, TAR
 print(f"at the validation threshold: TAR {fixed_thr_tar:.4f}, FAR {fixed_thr_far:.5f}")
 print(f"TEST identification (one enrolment photo per identity, {ident['n_gallery']} identities): rank-1 {ident['rank1']:.4f}, "
       f"rank-5 {ident['rank5']:.4f}, correct and above threshold {ident['open_set_correct_at_threshold']:.4f}")
-SUMMARY["identity_test"] = {**{k: v for k, v in te_rep.items() if k != "roc"}, **ident, "threshold": ID_THRESHOLD,
-                            "tar_at_threshold": fixed_thr_tar, "far_at_threshold": fixed_thr_far}
+test_open = open_set(te_emb, te_lab, threshold=ID_THRESHOLD_1N, seed=8)
+print(f"TEST open-set identification at the 1:N threshold (gallery of {test_open['gallery_size']}): strangers named "
+      f"{test_open['fpir']:.4f}, enrolled people missed or misnamed {test_open['fnir']:.4f}, rank-1 {test_open['rank1']:.4f}")
+
+# The same test identities through OUR detector and alignment, as the photo pipeline sees faces (review finding).
+sub = np.random.default_rng(4).choice(len(test_labels), min(3000, len(test_labels)), replace=False)
+pipe_crops, pipe_idx = [], []
+for i in sub:
+    img = cv2.resize(np.asarray(test_images[i]), (224, 224), interpolation=cv2.INTER_CUBIC)
+    faces = detect_image(det_model, img, device=DEVICE, max_side=224, score_threshold=0.3)
+    if faces:
+        pipe_crops.append(align.align_face(img, np.asarray(faces[0]["landmarks"], dtype=np.float32), 112)); pipe_idx.append(i)
+pipe_idx = np.asarray(pipe_idx)
+pipe_report = {"detected": int(len(pipe_idx)), "of": int(len(sub))}
+if len(pipe_idx) > 100:
+    pe, pl = embed(embedder, arrays.ArrayDataset(np.stack(pipe_crops), test_labels[pipe_idx]), DEVICE)
+    pp, ps = metrics.verification_pairs(pl, 3000, 60000, seed=5)
+    via_pipe = metrics.verification_report(metrics.cosine_scores(pe, pp), ps, fars=(1e-3,))
+    direct = metrics.verification_report(metrics.cosine_scores(te_emb[pipe_idx], pp), ps, fars=(1e-3,))
+    pipe_report.update({"tar@far=0.001_pipeline": via_pipe["tar@far=0.001"], "tar@far=0.001_direct": direct["tar@far=0.001"],
+                        "auc_pipeline": via_pipe["auc"], "auc_direct": direct["auc"]})
+print("test identities through our detector and alignment:", pipe_report)
+SUMMARY["identity_test"] = {**{k: v for k, v in te_rep.items() if k != "roc"}, **ident, "threshold_1to1": ID_THRESHOLD,
+                            "tar_at_threshold": fixed_thr_tar, "far_at_threshold": fixed_thr_far,
+                            "threshold_1toN": ID_THRESHOLD_1N, "open_set_validation": val_open, "open_set_test": test_open,
+                            "through_pipeline": pipe_report}
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 axes[0].plot(te_rep["roc"]["fpr"], te_rep["roc"]["tpr"]); axes[0].set_xscale("log"); axes[0].set_xlim(1e-5, 1)
@@ -613,7 +675,10 @@ card = {
                    "test": SUMMARY["expression_test"],
                    "limitations": "Neutral is a proxy (Emotional Numbness, Concentration, Contemplation). Trained on synthetic portraits."},
     "identity": {"file": "embedder.onnx", "architecture": f"{ID_DEPTH} from scratch, CosFace s=64 m=0.35, 512-d",
-                 "input_size": 112, "threshold": ID_THRESHOLD, "threshold_rule": "FAR 1e-3 on 400 held-out synthetic identities",
+                 "input_size": 112, "threshold": ID_THRESHOLD_1N,
+                 "threshold_rule": f"1:N gallery threshold: 1% of strangers named with a gallery of {val_open['gallery_size']} "
+                                   "people, set on held-out synthetic validation identities",
+                 "threshold_1to1": ID_THRESHOLD, "threshold_1to1_rule": "FAR 1e-3 on held-out synthetic validation identities",
                  "trained_on": f"DigiFace-1M parts {CFG['digiface_train']}", "test": SUMMARY["identity_test"],
                  "limitations": "Trained and calibrated on synthetic faces only. Accuracy on real faces was NOT measured in this run. "
                                 "Recalibrate the threshold on your own enrolled photos before trusting names."},
@@ -636,7 +701,7 @@ code("""
 # Enrol 12 unseen DigiFace identities with three photos each, then identify other photos of them and of 12 strangers.
 rng = np.random.default_rng(5)
 people = rng.choice(np.unique(test_labels), 24, replace=False); known, strangers = people[:12], people[12:]
-gallery = Gallery(ID_THRESHOLD)
+gallery = Gallery(ID_THRESHOLD_1N)
 for p in known: gallery.enroll(f"person-{p}", te_emb[np.flatnonzero(te_lab == p)[:3]])
 right = wrong = unknown_ok = unknown_bad = 0
 for p in known:

@@ -73,6 +73,7 @@ def main(argv=None) -> int:
         tried = []
         for depth in candidates:
             args_depth = argparse.Namespace(**{**vars(args), "depth": depth})
+            engine.seed_everything(args.seed)
             probe = build_task(args_depth, images, labels, num_train_ids)
             seconds = engine.measure_step_seconds(probe, device, steps=30, warmup=8)
             started = time.time()
@@ -97,11 +98,14 @@ def main(argv=None) -> int:
         print(f"[train] plan: {plan}", flush=True)
     args.depth = plan.get("depth", args.depth)
 
+    engine.seed_everything(args.seed)          # the model's initial weights are reproducible
     task = build_task(args, images, labels, num_train_ids)
-    cfg = engine.TrainConfig(epochs=plan["epochs"], lr=args.lr, weight_decay=args.weight_decay, optimizer="sgd",
-                             warmup_epochs=min(1.0, plan["epochs"] / 4), checkpoint_every=1000, log_every=100,
-                             seed=args.seed, max_steps=args.max_steps,
-                             max_minutes=args.budget_minutes * 1.15, grad_clip=5.0)
+    # Time-aware cosine: the schedule anneals by the end of the budget even if sharing the GPU slows training.
+    epochs = max(1, int(round(plan["epochs"] * 1.3)))
+    cfg = engine.TrainConfig(epochs=epochs, lr=args.lr, weight_decay=args.weight_decay, optimizer="sgd",
+                             warmup_epochs=min(1.0, epochs / 4), checkpoint_every=1000, log_every=100,
+                             seed=args.seed, max_steps=args.max_steps, max_minutes=args.budget_minutes,
+                             time_schedule=True, grad_clip=5.0)
     extra = {"identity": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}, "plan": plan}
     result = engine.fit(task, cfg, args.run_dir, device=device, log=lambda s: print(s, flush=True), extra_config=extra)
     print(f"[train] finished with status {result.status}; best {task.monitor}={result.best_value}", flush=True)

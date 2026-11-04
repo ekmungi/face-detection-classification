@@ -28,8 +28,12 @@ def decode_rgb(data: bytes) -> np.ndarray | None:
 
 
 def read_rgb(path: str | Path) -> np.ndarray | None:
-    """Reads an image file as RGB uint8, or None when it cannot be read."""
-    array = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    """Reads an image file as RGB uint8, or None when it cannot be read (works for non-ASCII Windows paths)."""
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+    except OSError:
+        return None
+    array = cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
     return None if array is None else cv2.cvtColor(array, cv2.COLOR_BGR2RGB)
 
 
@@ -85,7 +89,8 @@ def split_identities(identities: list[str], n_val: int, seed: int = 0, max_ids: 
 
 
 def build_digiface_array(paths: list[str], identities: list[str], keep: list[str], out_dir: Path, name: str,
-                         label_of: dict[str, int], max_per_id: int | None = None, workers: int = 8) -> dict:
+                         label_of: dict[str, int], max_per_id: int | None = None, workers: int = 8,
+                         extra_meta: dict | None = None) -> dict:
     """Decodes the images of the kept identities into an array set; labels come from `label_of`."""
     kept: list[tuple[str, str]] = []
     per_id: dict[str, int] = {}
@@ -97,7 +102,7 @@ def build_digiface_array(paths: list[str], identities: list[str], keep: list[str
     images = parallel_map(_load_112, [p for p, _ in kept], workers=workers, chunksize=256)
     items = ((img, label_of[identity], f"digiface:{identity}") for img, (_, identity) in zip(images, kept))
     return write_array(out_dir, name, items, count=len(kept), size=112,
-                       meta={"identities": sorted(keep_set), "num_classes": len(label_of)})
+                       meta={"identities": sorted(keep_set), "num_classes": len(label_of), **(extra_meta or {})})
 
 
 # --- EmoNet-Face ----------------------------------------------------------------------------------------------
@@ -119,7 +124,7 @@ def emonet_selection(paths: list[Path], hq: bool = False, max_items: int | None 
 
 def build_emonet_array(paths: list[Path], selection: list[tuple[int, int, str]], detect: DetectFn, out_dir: Path,
                        name: str, size: int = 224, exclude_hashes: set[str] | None = None,
-                       fallback_center_crop: bool = False) -> dict:
+                       fallback_center_crop: bool = False, exclude_prompts: set[str] | None = None) -> dict:
     """Decodes the selected portraits, aligns each with the detector and writes an array set.
 
     Each item's id is the SHA-1 of its image bytes, so another array can be checked for duplicates; images whose hash
@@ -129,7 +134,11 @@ def build_emonet_array(paths: list[Path], selection: list[tuple[int, int, str]],
     """
     import hashlib
     wanted = {row: (cls, prompt) for row, cls, prompt in selection}
-    counts = {"no_face": 0, "duplicates": 0, "fallback": 0}
+    counts = {"no_face": 0, "duplicates": 0, "fallback": 0, "shared_prompt": 0}
+    if exclude_prompts:
+        before = len(wanted)
+        wanted = {row: v for row, v in wanted.items() if v[1] not in exclude_prompts}
+        counts["shared_prompt"] = before - len(wanted)
     groups: list[str] = []
 
     def items():

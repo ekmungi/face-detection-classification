@@ -75,10 +75,13 @@ class IResNet(nn.Module):
         self.features.weight.requires_grad = False
         for module in self.modules():
             if isinstance(module, nn.Conv2d):
-                nn.init.normal_(module.weight, 0, 0.1)
+                nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(module, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(module.weight, 1)
                 nn.init.constant_(module.bias, 0)
+        for module in self.modules():
+            if isinstance(module, IBasicBlock):
+                nn.init.constant_(module.bn3.weight, 0)   # each residual block starts as the identity
 
     def _make_layer(self, planes: int, blocks: int, stride: int) -> nn.Sequential:
         downsample = None

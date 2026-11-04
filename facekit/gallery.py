@@ -23,6 +23,7 @@ class Gallery:
         self.threshold = float(threshold)
         self.names: list[str] = []
         self.templates = np.zeros((0, 0), dtype=np.float32)
+        self.sums: dict[str, np.ndarray] = {}
         self.counts: list[int] = []
 
     def __len__(self) -> int:
@@ -33,10 +34,12 @@ class Gallery:
         vectors = _normalise(embeddings)
         if name in self.names:
             i = self.names.index(name)
-            total = self.templates[i] * self.counts[i] + vectors.sum(0)
+            previous = self.sums.get(name, self.templates[i] * self.counts[i])
+            self.sums[name] = previous + vectors.sum(0)
             self.counts[i] += len(vectors)
-            self.templates[i] = _normalise(total)[0]
+            self.templates[i] = _normalise(self.sums[name])[0]
             return
+        self.sums[name] = vectors.sum(0)
         template = _normalise(vectors.mean(0))
         self.templates = template if len(self.names) == 0 else np.vstack([self.templates, template])
         self.names.append(name)
@@ -59,8 +62,10 @@ class Gallery:
 
     def save(self, path: str | Path) -> None:
         """Saves the gallery as a .npz file."""
+        sums = np.stack([self.sums.get(n, t * c) for n, t, c in zip(self.names, self.templates, self.counts)]) \
+            if self.names else np.zeros((0, 0), dtype=np.float32)
         np.savez(path, names=np.array(self.names), templates=self.templates, counts=np.array(self.counts),
-                 threshold=np.array(self.threshold))
+                 sums=sums, threshold=np.array(self.threshold))
 
     @classmethod
     def load(cls, path: str | Path) -> "Gallery":
@@ -70,4 +75,6 @@ class Gallery:
         gallery.names = [str(n) for n in data["names"]]
         gallery.templates = data["templates"].astype(np.float32)
         gallery.counts = [int(c) for c in data["counts"]]
+        if "sums" in data.files and len(data["sums"]):
+            gallery.sums = {n: s.astype(np.float32) for n, s in zip(gallery.names, data["sums"])}
         return gallery

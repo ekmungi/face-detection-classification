@@ -92,7 +92,8 @@ class ExpressionTask:
         return self.loss(logits, y), {"acc": (logits.argmax(1) == y).float().mean()}
 
     def validate(self, device: torch.device) -> dict[str, float]:
-        logits, y = predict_logits(self.model, self.val_set, device, 256, self.num_workers)
+        with torch.autocast(device_type=torch.device(device).type, enabled=False):   # same precision as the test
+            logits, y = predict_logits(self.model, self.val_set, device, 256, self.num_workers)
         pred = logits.argmax(1)
         loss = F.cross_entropy(torch.from_numpy(logits), torch.from_numpy(y)).item()
         report = metrics.classification_report(y, pred, self.num_classes, n_boot=1)

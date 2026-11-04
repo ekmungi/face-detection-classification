@@ -16,3 +16,11 @@ notebooks/*_output.ipynb
 data/
 models/
 notebooks/*.executed.ipynb
+# Photos and scan outputs (they can name real people)
+*.jpg
+*.jpeg
+*.png
+*.heic
+results*.jsonl
+gallery*.npz
+!docs/figures/*.png

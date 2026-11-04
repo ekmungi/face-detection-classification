@@ -99,8 +99,12 @@ def emonet_hq_class(label_text: str, min_intensity: float = 3.0, neutral_max: fl
     emotional = sorted(((v, k) for k, v in scores.items() if k != "neutral"), reverse=True)
     if not emotional:
         return None
-    if emotional[0][0] <= neutral_max:
-        return CLASSES.index("neutral")
+    neutral_proxies = {c for c, cls in EMONET_TO_CLASS.items() if cls == "neutral"}
+    strongest_any = max((v for name, v in means.items() if name not in neutral_proxies), default=0.0)
+    if strongest_any <= neutral_max:
+        return CLASSES.index("neutral")       # no emotion of any kind, mapped or not, is clearly present
+    if strongest_any > emotional[0][0]:
+        return None                           # the dominant emotion is one the eight classes do not cover
     second = emotional[1][0] if len(emotional) > 1 else 0.0
     if emotional[0][0] >= min_intensity and emotional[0][0] - second >= 1.0:
         return CLASSES.index(emotional[0][1])

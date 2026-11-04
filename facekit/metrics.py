@@ -90,14 +90,14 @@ def verification_report(scores: np.ndarray, same: np.ndarray, fars: tuple[float,
     eer_index = int(np.nanargmin(np.abs(fpr - (1 - tpr))))
     report["eer"] = float((fpr[eer_index] + 1 - tpr[eer_index]) / 2)
     for far in fars:
-        ok = np.flatnonzero(fpr <= far)
-        i = int(ok[-1]) if len(ok) else 0
+        ok = np.flatnonzero(fpr[1:] <= far) + 1      # index 0 is sklearn's "reject everything" threshold
+        i = int(ok[-1]) if len(ok) else 1
         report[f"tar@far={far:g}"] = float(tpr[i])
-        report[f"threshold@far={far:g}"] = float(thresholds[i])
-    accuracies = [((scores >= t) == same).mean() for t in thresholds[1:]]
-    best = int(np.argmax(accuracies))
-    report["best_accuracy"] = float(accuracies[best])
-    report["best_accuracy_threshold"] = float(thresholds[1:][best])
+        report[f"threshold@far={far:g}"] = float(min(thresholds[i], 1.0))
+    balanced = 0.5 * (tpr[1:] + 1.0 - fpr[1:])
+    best = int(np.argmax(balanced))
+    report["best_balanced_accuracy"] = float(balanced[best])
+    report["best_balanced_accuracy_threshold"] = float(thresholds[1:][best])
     report["roc"] = {"fpr": fpr[:: max(1, len(fpr) // 400)].tolist(), "tpr": tpr[:: max(1, len(tpr) // 400)].tolist()}
     return report
 

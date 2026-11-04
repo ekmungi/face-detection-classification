@@ -213,3 +213,36 @@ def test_augment_under_autocast_returns_float32_with_blur():
     with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
         out = augment_batch(x, IDENTITY_AUG, torch.Generator().manual_seed(0))
     assert out.dtype == torch.float32
+
+
+def test_umeyama_recovers_a_similarity_exactly_and_spreads_noise():
+    angle, scale, shift = 0.3, 1.7, np.array([12.0, -4.0])
+    rot = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    src = align.ARCFACE_TEMPLATE_112.astype(np.float64)
+    dst = (scale * src @ rot.T) + shift
+    m = align.umeyama(src, dst)
+    assert np.allclose(np.c_[src, np.ones(5)] @ m.T, dst, atol=1e-6)
+
+
+def test_hq_neutral_requires_no_strong_unmapped_emotion():
+    pain = "[{'h1': {'Group|Pain': 6.5, 'Group|Distress': 5.5, 'Group|Anger': 0, 'Group|Amusement': 0}}]"
+    assert emonet_hq_class(pain) is None
+
+
+def test_gallery_enrolment_weights_every_photo_equally(tmp_path):
+    g = Gallery(0.5)
+    g.enroll("a", np.array([[1.0, 0.0]]))
+    g.enroll("a", np.array([[0.0, 1.0], [0.0, 1.0]]))
+    expected = np.array([1.0, 2.0]) / np.sqrt(5.0)
+    assert np.allclose(g.templates[0], expected, atol=1e-6)
+    g.save(tmp_path / "g.npz")
+    loaded = Gallery.load(tmp_path / "g.npz")
+    loaded.enroll("a", np.array([[1.0, 0.0]]))
+    assert np.allclose(loaded.templates[0], np.array([2.0, 2.0]) / np.sqrt(8.0), atol=1e-6)
+
+
+def test_verification_threshold_is_never_the_reject_all_sentinel():
+    same = np.array([1, 0, 0, 0])
+    scores = np.array([0.5, 0.9, 0.1, 0.2])   # the top impostor outscores the only genuine pair
+    report = metrics.verification_report(scores, same, fars=(1e-3,))
+    assert report["threshold@far=0.001"] <= 1.0

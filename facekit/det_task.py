@@ -8,13 +8,14 @@ import torch
 from torch.utils.data import DataLoader
 
 from facekit import det_eval
-from facekit.arrays import EpochSampler
+from facekit.arrays import EpochSampler, worker_init
 from facekit.det_data import WiderFaceTrain, detection_collate, read_rgb
 from facekit.det_model import FaceDetNet, decode, detect_image, detection_loss
 
 
 def split_records(records: list[dict], val_fraction: float = 0.05, seed: int = 0) -> tuple[list[dict], list[dict]]:
-    """Splits WIDER train records into (train, validation) by image, grouped by event folder share, with a fixed seed."""
+    """Splits WIDER train records into (train, validation) at random by image with a fixed seed, as WIDER FACE's own
+    train/validation/test split does within each event class."""
     rng = np.random.default_rng(seed)
     order = rng.permutation(len(records))
     n_val = int(round(val_fraction * len(records)))
@@ -43,7 +44,7 @@ class DetectorTask:
     def train_batches(self, epoch: int, start_batch: int):
         sampler = EpochSampler(len(self.train_set), self.seed, epoch, start_batch * self.batch_size)
         return DataLoader(self.train_set, batch_size=self.batch_size, sampler=sampler, num_workers=self.num_workers,
-                          collate_fn=detection_collate, pin_memory=True, drop_last=True)
+                          collate_fn=detection_collate, pin_memory=True, drop_last=True, worker_init_fn=worker_init)
 
     def training_step(self, batch, device: torch.device):
         images, targets = batch
@@ -74,14 +75,20 @@ def predict_records(model: FaceDetNet, records: list[dict], image_root: Path, de
     return predictions, truths
 
 
-def choose_score_threshold(predictions: list, truths: list, iou: float = 0.5) -> dict:
-    """Picks the detection score threshold that maximises F1 on validation images (never on the test set)."""
+def choose_score_threshold(predictions: list, truths: list, iou: float = 0.5, min_face: float = 16.0) -> dict:
+    """Picks the detection score threshold that maximises F1 on validation images (never on the test set).
+
+    Faces below `min_face` pixels are left out on both sides, as the pipeline's FaceDetector drops them.
+    """
     best = {"threshold": 0.5, "f1": -1.0, "precision": 0.0, "recall": 0.0}
+    truths = [{"boxes": t["boxes"][np.minimum(t["boxes"][:, 2] - t["boxes"][:, 0], t["boxes"][:, 3] - t["boxes"][:, 1]) >= min_face]}
+              for t in truths]
     n_true = sum(len(t["boxes"]) for t in truths)
-    for threshold in np.arange(0.2, 0.9, 0.05):
+    for threshold in np.arange(0.1, 0.91, 0.025):
         tp = fp = 0
         for (boxes, scores), truth in zip(predictions, truths):
-            keep = scores >= threshold
+            big = np.minimum(boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1]) >= min_face
+            keep = (scores >= threshold) & big
             matched = det_eval.match_boxes(boxes[keep], truth["boxes"], iou) if keep.any() else []
             n_match = len(matched[0]) if isinstance(matched, tuple) else len(matched)
             tp += n_match

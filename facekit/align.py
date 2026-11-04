@@ -37,13 +37,32 @@ def estimate_transform(landmarks: np.ndarray, size: int = 112) -> np.ndarray:
     Raises:
         ValueError: when the landmarks do not have shape (5, 2) or the transform cannot be estimated.
     """
-    points = np.asarray(landmarks, dtype=np.float32)
-    if points.shape != (5, 2):
-        raise ValueError(f"expected landmarks of shape (5, 2), got {points.shape}")
-    matrix, _ = cv2.estimateAffinePartial2D(points, template_for(size), method=cv2.LMEDS)
-    if matrix is None:
+    points = np.asarray(landmarks, dtype=np.float64)
+    if points.shape != (5, 2) or not np.all(np.isfinite(points)):
+        raise ValueError(f"expected finite landmarks of shape (5, 2), got {points.shape}")
+    return umeyama(points, template_for(size).astype(np.float64)).astype(np.float32)
+
+
+def umeyama(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Least-squares similarity transform (rotation, uniform scale, translation) from source to target points.
+
+    Every point counts equally, so one noisy landmark shifts the crop a little instead of being dropped.
+    Returns the 2 x 3 matrix. Raises ValueError for degenerate points (all in one place).
+    """
+    mu_s, mu_t = source.mean(0), target.mean(0)
+    s_c, t_c = source - mu_s, target - mu_t
+    var_s = (s_c ** 2).sum() / len(source)
+    if var_s < 1e-9:
         raise ValueError("could not estimate an alignment transform from these landmarks")
-    return matrix.astype(np.float32)
+    cov = t_c.T @ s_c / len(source)
+    u, d, vt = np.linalg.svd(cov)
+    sign = np.eye(2)
+    if np.linalg.det(u) * np.linalg.det(vt) < 0:
+        sign[1, 1] = -1
+    rotation = u @ sign @ vt
+    scale = np.trace(np.diag(d) @ sign) / var_s
+    translation = mu_t - scale * rotation @ mu_s
+    return np.hstack([scale * rotation, translation[:, None]])
 
 
 def align_face(image: np.ndarray, landmarks: np.ndarray, size: int = 112) -> np.ndarray:

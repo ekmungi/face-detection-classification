@@ -41,7 +41,13 @@ class TrainConfig:
     seed: int = 0
     max_steps: int = 0                # 0 = no limit; smoke tests stop early
     max_minutes: float = 0.0          # 0 = no limit; the run stops cleanly and records why
+    time_schedule: bool = False       # with max_minutes: the cosine follows elapsed time too, so it always anneals
     heartbeat_every_s: float = 10.0
+
+
+# The fields that define the learning-rate schedule and the optimisation; a resumed run never changes them.
+SCHEDULE_FIELDS = ("epochs", "lr", "weight_decay", "optimizer", "momentum", "warmup_epochs", "min_lr_ratio", "amp",
+                   "grad_clip", "seed", "max_minutes", "time_schedule")
 
 
 class Task(Protocol):
@@ -158,47 +164,80 @@ def fit(task: Task, cfg: TrainConfig, run_dir: str | Path, device: str | torch.d
         return FitResult(load_history(run_dir), metrics.get("best_value"), metrics.get("best_epoch"),
                          "already-done", run_dir)
 
+    latest = runlib.latest_checkpoint(ckpt_dir)
+    saved = torch.load(latest, map_location=device, weights_only=True) if latest is not None else None
+    if saved is not None and saved.get("cfg"):
+        # A resumed run keeps the schedule it started with, so its learning rate never jumps (review finding).
+        # Stop controls (max_steps) and logging settings may change between attempts.
+        old = {k: saved["cfg"][k] for k in SCHEDULE_FIELDS if k in saved["cfg"]}
+        new = {k: getattr(cfg, k) for k in old}
+        if old != new:
+            log(f"[fit] resuming with the saved configuration {old} (ignoring {new})")
+            cfg = dataclasses.replace(cfg, **old)
     write_run_files(run_dir, {"train": dataclasses.asdict(cfg), **(extra_config or {})})
     seed_everything(cfg.seed)
     model = task.model.to(device)
     optimizer = make_optimizer(model, cfg)
+    base_lrs = [group["lr"] for group in optimizer.param_groups]
     total_steps = cfg.epochs * task.steps_per_epoch
     warmup_steps = int(cfg.warmup_epochs * task.steps_per_epoch)
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer, lambda s: lr_factor(s, total_steps, warmup_steps, cfg.min_lr_ratio))
+    budget_seconds = cfg.max_minutes * 60.0 if (cfg.time_schedule and cfg.max_minutes) else 0.0
     use_amp, amp_dtype, use_scaler = autocast_settings(device, cfg.amp)
     scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
 
-    step, epoch, start_batch = 0, 0, 0
+    def progress(at_step: int, elapsed: float) -> float:
+        by_steps = (at_step - warmup_steps) / max(1, total_steps - warmup_steps)
+        by_time = elapsed / budget_seconds if budget_seconds else 0.0
+        return min(1.0, max(by_steps, by_time, 0.0))
+
+    def set_lr(at_step: int, elapsed: float) -> float:
+        if warmup_steps > 0 and at_step < warmup_steps:
+            factor = (at_step + 1) / warmup_steps
+        else:
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress(at_step, elapsed)))
+            factor = cfg.min_lr_ratio + (1.0 - cfg.min_lr_ratio) * cosine
+        for group, base in zip(optimizer.param_groups, base_lrs):
+            group["lr"] = base * factor
+        return base_lrs[0] * factor
+
+    step, epoch, start_batch, elapsed_before = 0, 0, 0, 0.0
     best_value, best_epoch = None, None
-    latest = runlib.latest_checkpoint(ckpt_dir)
-    if latest is not None:
-        saved = torch.load(latest, map_location=device, weights_only=True)
+    if saved is not None:
         model.load_state_dict(saved["model"])
         optimizer.load_state_dict(saved["optimizer"])
-        scheduler.load_state_dict(saved["scheduler"])
         scaler.load_state_dict(saved["scaler"])
         step, epoch, start_batch = saved["step"], saved["epoch"], saved["batch_in_epoch"]
         best_value, best_epoch = saved.get("best_value"), saved.get("best_epoch")
+        elapsed_before = float(saved.get("elapsed", 0.0))
         random.setstate(saved["python_rng"])
         torch.set_rng_state(saved["torch_rng"].cpu())
-        log(f"[fit] resumed from {latest.name}: epoch {epoch}, batch {start_batch}, step {step}")
+        if device.type == "cuda" and saved.get("cuda_rng") is not None:
+            torch.cuda.set_rng_state(saved["cuda_rng"].cpu())
+        log(f"[fit] resumed from {latest.name}: epoch {epoch}, batch {start_batch}, step {step}, "
+            f"{elapsed_before / 60:.1f} minutes already trained")
         runlib.append_jsonl(run_dir / "attempts.jsonl", {"time": time.time(), "resumed_from": latest.name})
     else:
         runlib.append_jsonl(run_dir / "attempts.jsonl", {"time": time.time(), "resumed_from": None})
 
+    started = time.time()
+
+    def elapsed_now() -> float:
+        return elapsed_before + (time.time() - started)
+
     def checkpoint(batch_in_epoch: int, at_epoch: int) -> str:
         path = runlib.checkpoint_path(ckpt_dir, step)
         _save_checkpoint(path, {
-            "model": model.state_dict(), "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
+            "model": model.state_dict(), "optimizer": optimizer.state_dict(),
             "scaler": scaler.state_dict(), "step": step, "epoch": at_epoch, "batch_in_epoch": batch_in_epoch,
-            "best_value": best_value, "best_epoch": best_epoch,
+            "best_value": best_value, "best_epoch": best_epoch, "elapsed": elapsed_now(),
+            "cfg": dataclasses.asdict(cfg),
             "python_rng": random.getstate(), "torch_rng": torch.get_rng_state(),
+            "cuda_rng": torch.cuda.get_rng_state() if device.type == "cuda" else None,
         })
         runlib.prune_checkpoints(ckpt_dir, cfg.keep_checkpoints)
         return path.name
 
-    started = time.time()
+    current_lr = set_lr(step, elapsed_before)
     last_beat = 0.0
     last_ckpt = latest.name if latest else None
     status = "done"
@@ -222,8 +261,8 @@ def fit(task: Task, cfg: TrainConfig, run_dir: str | Path, device: str | torch.d
                 nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
             step += 1
+            current_lr = set_lr(step, elapsed_now())
             batch_index += 1
             loss_value = float(loss.detach())
             running["loss"] = running.get("loss", 0.0) + loss_value
@@ -236,7 +275,7 @@ def fit(task: Task, cfg: TrainConfig, run_dir: str | Path, device: str | torch.d
                 rate = batch_index / max(1e-6, now - epoch_started)
                 log(f"[fit] epoch {epoch + 1}/{cfg.epochs} step {step} "
                     + " ".join(f"{k}={v:.4f}" for k, v in means.items())
-                    + f" lr={scheduler.get_last_lr()[0]:.2e} batches/s={rate:.2f}")
+                    + f" lr={current_lr:.2e} batches/s={rate:.2f}")
                 running, running_n = {}, 0
             if now - last_beat >= cfg.heartbeat_every_s:
                 runlib.write_heartbeat(run_dir / "heartbeat.json", step, epoch, loss_value, last_ckpt, "running", now=now)
@@ -246,7 +285,10 @@ def fit(task: Task, cfg: TrainConfig, run_dir: str | Path, device: str | torch.d
             if cfg.max_steps and step >= cfg.max_steps:
                 status = "stopped-max-steps"
                 break
-            if cfg.max_minutes and (now - started) / 60.0 >= cfg.max_minutes:
+            if budget_seconds and progress(step, elapsed_now()) >= 1.0:
+                status = "schedule-complete"       # the time-aware cosine has annealed: a normal end
+                break
+            if cfg.max_minutes and not budget_seconds and elapsed_now() / 60.0 >= cfg.max_minutes:
                 status = "stopped-time-budget"
                 break
         start_batch = 0
@@ -258,7 +300,7 @@ def fit(task: Task, cfg: TrainConfig, run_dir: str | Path, device: str | torch.d
             val = task.validate(device)
         model.train()
         record = {"epoch": epoch + 1, "step": step, "seconds": round(time.time() - epoch_started, 1),
-                  "lr": scheduler.get_last_lr()[0], "train_loss_last": loss_value,
+                  "lr": current_lr, "train_loss_last": loss_value,
                   **{f"val_{k}": v for k, v in val.items()}}
         runlib.append_jsonl(run_dir / "metrics_history.jsonl", record)
         log("[fit] epoch {} done in {:.0f}s: ".format(epoch + 1, record["seconds"])
@@ -272,14 +314,18 @@ def fit(task: Task, cfg: TrainConfig, run_dir: str | Path, device: str | torch.d
         if status != "done":
             break
         epoch += 1
+        if budget_seconds and progress(step, elapsed_now()) >= 1.0:
+            status = "schedule-complete"
+            break
         last_ckpt = checkpoint(0, epoch)
 
     _save_checkpoint(run_dir / "final.pt", {"model": model.state_dict(), "epoch": epoch, "step": step})
     metrics = {"status": status, "best_value": best_value, "best_epoch": best_epoch, "monitor": task.monitor,
-               "steps": step, "minutes": round((time.time() - started) / 60.0, 2)}
+               "steps": step, "minutes": round(elapsed_now() / 60.0, 2), "final_lr": current_lr,
+               "annealed": status in ("done", "schedule-complete")}
     runlib.write_json_atomic(run_dir / "metrics.json", metrics)
     runlib.write_heartbeat(run_dir / "heartbeat.json", step, epoch, loss_value, last_ckpt, "done")
-    if status in ("done", "stopped-time-budget"):
+    if status in ("done", "schedule-complete"):
         (run_dir / "DONE").write_text(status + "\n", encoding="utf-8")
     log(f"[fit] finished: {metrics}")
     return FitResult(load_history(run_dir), best_value, best_epoch, status, run_dir)

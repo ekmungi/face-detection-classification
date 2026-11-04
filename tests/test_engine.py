@@ -97,3 +97,22 @@ def test_overfit_one_batch_drives_loss_down():
     x, y = torch.randn(8, 5), torch.randint(0, 3, (8,))
     losses = engine.overfit_one_batch(nn.Linear(5, 3), lambda m: F.cross_entropy(m(x), y), steps=200, lr=0.05)
     assert losses[-1] < 0.1 * losses[0]
+
+
+def test_time_schedule_anneals_and_marks_done(tmp_path):
+    task = ToyTask()
+    cfg = _cfg(epochs=50, max_minutes=0.02, time_schedule=True)   # 1.2 seconds
+    result = engine.fit(task, cfg, tmp_path / "run", device="cpu", log=lambda s: None)
+    metrics_json = json.loads((tmp_path / "run" / "metrics.json").read_text())
+    assert result.status in ("schedule-complete", "done")
+    assert metrics_json["annealed"] is True
+    assert metrics_json["final_lr"] <= 0.05 * 0.011
+    assert (tmp_path / "run" / "DONE").exists()
+
+
+def test_resume_keeps_the_saved_configuration(tmp_path):
+    engine.fit(ToyTask(), _cfg(max_steps=13), tmp_path / "run", device="cpu", log=lambda s: None)
+    lines = []
+    engine.fit(ToyTask(), _cfg(epochs=6), tmp_path / "run", device="cpu", log=lines.append)
+    assert any("saved configuration" in line for line in lines)
+    assert json.loads((tmp_path / "run" / "config.json").read_text())["train"]["epochs"] == 3

@@ -100,17 +100,26 @@ class EpochSampler(Sampler[int]):
         return self.length - self.start
 
 
+def worker_init(_worker_id: int) -> None:
+    """Keeps each data-loader worker single-threaded: with 8 workers, OpenCV's and torch's own thread pools would
+    otherwise oversubscribe the CPU many times over (the cause of a slow first full run)."""
+    import cv2
+    cv2.setNumThreads(0)
+    torch.set_num_threads(1)
+
+
 def epoch_loader(dataset: Dataset, batch_size: int, seed: int, epoch: int, start_batch: int = 0,
                  num_workers: int = 4, weights: np.ndarray | None = None, drop_last: bool = True) -> DataLoader:
     """Returns the training loader for one epoch, starting after `start_batch` batches."""
     sampler = EpochSampler(len(dataset), seed, epoch, start_batch * batch_size, weights)
     return DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=num_workers, pin_memory=True,
-                      drop_last=drop_last, persistent_workers=False)
+                      drop_last=drop_last, persistent_workers=False, worker_init_fn=worker_init)
 
 
 def eval_loader(dataset: Dataset, batch_size: int = 512, num_workers: int = 4) -> DataLoader:
     """Returns an ordered loader for evaluation."""
-    return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True,
+                      worker_init_fn=worker_init)
 
 
 def stratified_split(labels: np.ndarray, fractions: tuple[float, float, float], seed: int = 0
