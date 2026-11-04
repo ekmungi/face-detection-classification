@@ -1,0 +1,14 @@
+[project]
+name = "face-detection-classification"
+version = "0.1.0"
+description = "A small MNIST project that exercises the Jeeves Colab research workflow end to end."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+# Needed only on this computer, for the local notebook loop. Colab already has torch and Jupyter installed.
+local = ["torch", "torchvision", "matplotlib", "ipykernel", "jupyterlab", "nbclient", "nbformat", "pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "tests"]
+testpaths = ["tests"]

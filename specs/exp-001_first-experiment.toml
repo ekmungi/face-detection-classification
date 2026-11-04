@@ -1,0 +1,31 @@
+# Experiment specification for exp-001. Fill in every value before the first run; the skill reads it to check the budget and the data.
+
+[experiment]
+id = "exp-001"
+question = "State the question this run answers, in one sentence."
+hypothesis = "State what you expect, with a number, and what would count as failing."
+kind = "explore"   # "explore" tries an idea; "confirm" reproduces or checks a result
+
+[data]
+name = "MNIST"
+mode = "fetch"   # fetch: downloaded onto the machine's disk each session, nothing kept in Drive. store: read from artifacts/data.
+source = "state where the data comes from"
+class = "public"   # public, approved or restricted; restricted data never goes to Colab without approval
+split = "state how the data is split and which split is used once, at the end"
+
+[train]
+epochs = 3
+batch_size = 128
+lr = 0.001
+seed = 0
+checkpoint_every = 100
+heartbeat_every_s = 5.0
+
+[budget]
+hardware = "free-tier T4 or CPU"   # a paid GPU or a TPU needs approval; never choose a TPU, the code needs CUDA
+max_hours = 0.5
+max_compute_units = 0
+max_retries = 2
+
+[stopping]
+ask_if = "validation accuracy is below the chance level after epoch 1, or the heartbeat is older than 120 seconds"
