@@ -56,8 +56,9 @@ No data, face image, label, embedding or model weight is in this repository; a p
   dataset with its licence); `prepare.py`; `export.py` (ONNX); `detect.py`, `pipeline.py`, `gallery.py`, `cli.py`.
 - `notebooks/03_end_to_end.ipynb`: data, checks, the three trainings, the tests, figures, ONNX export and the model
   card, in one run. It is generated from `tools/build_notebook.py`.
-- `docs/figures/`: the figures, each kept as a PNG with its source; the notebook links `pipeline_flow.png` (how the
-  models feed each other) right after the introduction. VS Code and GitHub show it, and Colab shows its alt text.
+- `docs/figures/`: the figures, each kept as a PNG with its source. Right after its introduction, the notebook shows
+  `pipeline_flow.png` (how the models feed each other) from the file's address on GitHub, so Colab, VS Code and
+  GitHub all show it when the computer is online.
 - `train.py`: identity training from the command line (the notebook runs it as a second process).
 - `tools/colab_launch.py`, `tools/colab_status.py`: start the notebook headless on a Colab machine and read its state.
 

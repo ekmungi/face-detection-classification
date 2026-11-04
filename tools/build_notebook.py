@@ -60,7 +60,7 @@ The notebook needs a Colab machine with an NVIDIA GPU. Choose one of three modes
 md("""
 ## How the pipeline fits together
 
-![The face pipeline: the detector finds each face and its five landmarks, the alignment step cuts two upright crops, the expression model turns the larger crop into eight probabilities, and the identity model's embedding of the smaller crop is matched against the gallery of enrolled people.](../docs/figures/pipeline_flow.png)
+![The face pipeline: the detector finds each face and its five landmarks, the alignment step cuts two upright crops, the expression model turns the larger crop into eight probabilities, and the identity model's embedding of the smaller crop is matched against the gallery of enrolled people.](https://raw.githubusercontent.com/ekmungi/face-detection-classification/main/docs/figures/pipeline_flow.png)
 
 The figure shows what happens to one photo once the models are trained, when the finished pipeline runs on a laptop or a GPU.
 
@@ -71,7 +71,8 @@ The figure shows what happens to one photo once the models are trained, when the
 
 - Boxes with a white fill are the three trained networks, which this notebook trains, and each one lists what is inside it.
 - The grey alignment box is a fixed calculation with no trained weights. So is the amber gallery match, which is marked because its threshold needs recalibrating.
-- The figure's source and the PNG are in `docs/figures/`, and this cell links the PNG. VS Code and GitHub show the picture. A notebook opened through Colab's GitHub address, and the executed copy that a run saves in its run folder, show the sentence that describes it instead.
+- The figure's source and the PNG are in `docs/figures/`, and this cell shows the PNG from its address on GitHub.
+- The picture appears wherever this notebook is opened while the computer is online: on GitHub, in VS Code, and in Colab, whether Colab opens it from GitHub, from Google Drive or as an uploaded file. Without a connection, the sentence that describes the picture appears instead.
 
 | Block | Model | Input | Output |
 |---|---|---|---|

@@ -48,22 +48,73 @@ def test_no_tracked_file_carries_a_record_number():
     assert found == [], "record numbers belong in the private notes, not the repository:\n" + "\n".join(found)
 
 
-def test_the_notebook_links_the_pipeline_figure_in_docs_figures_and_embeds_nothing():
-    """The figure is linked, never embedded: Colab cannot show an attachment, and an embedded picture bloats the file.
+FIGURE_ADDRESS = "https://raw.githubusercontent.com/ekmungi/face-detection-classification/main/"
+PICTURE_TARGETS = (
+    re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)"),                       # inline markdown picture
+    re.compile(r"!\[[^\]]*\]\[([^\]]*)\]"),                            # reference-style picture, by its label
+    re.compile(r"<img\b[^>]*\bsrc\s*=\s*[\"']?([^\"'\s>]+)", re.I),     # HTML picture
+)
 
-    VS Code and GitHub show the linked picture; Colab shows the alt text, so the alt text is a full sentence.
+
+def picture_targets(markdown: str) -> list:
+    """Every address a markdown cell shows a picture from; a reference-style picture resolves through its label."""
+    definitions = {m.group(1).lower(): m.group(2)
+                   for m in re.finditer(r"^\s*\[([^\]]+)\]:\s*<?(\S+?)>?(?:\s|$)", markdown, re.M)}
+    targets = []
+    for pattern in PICTURE_TARGETS:
+        for found in pattern.finditer(markdown):
+            target = found.group(1)
+            if pattern is PICTURE_TARGETS[1]:
+                label = target or re.match(r"!\[([^\]]*)\]", found.group(0)).group(1)
+                target = definitions.get(label.lower(), "unresolved reference " + label)
+            targets.append(target)
+    return targets
+
+
+def test_the_notebook_shows_the_pipeline_figure_from_its_github_address_and_embeds_nothing():
+    """The figure is shown from its full GitHub address, and no cell embeds a picture or shows one by a relative path.
+
+    A relative path such as ../docs/figures resolves only where the notebook can be traced to the repository: the file
+    in a checkout, GitHub, and Colab when it opens the notebook from GitHub. A copy opened from Google Drive or
+    uploaded, such as the executed copy an unattended run saves in its run folder, has no repository to resolve it
+    against. The full address works in all of these whenever the computer is online. A picture embedded in the cell
+    more than doubled the notebook's size. The alt text is a full sentence for a reader who cannot load the picture.
     """
     cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    text = lambda cell: cell["source"] if isinstance(cell["source"], str) else "".join(cell["source"])  # noqa: E731
     figure = cells[1]
     assert figure["cell_type"] == "markdown"
-    source = figure["source"] if isinstance(figure["source"], str) else "".join(figure["source"])
-    link = re.search(r"!\[([^\]]+)\]\((\.\./docs/figures/[^)]+\.png)\)", source)
-    assert link, "the second cell links a PNG in docs/figures"
+    link = re.search(r"!\[([^\]]+)\]\((https://[^)\s]+\.png)\)", text(figure))
+    assert link, "the second cell shows a PNG by its full address"
     alt, target = link.groups()
-    assert (NOTEBOOK.parent / target).resolve() == (ROOT / "docs" / "figures" / "pipeline_flow.png").resolve()
+    assert target.startswith(FIGURE_ADDRESS), "the address is the PNG on the repository's main branch"
+    assert target[len(FIGURE_ADDRESS):] == "docs/figures/pipeline_flow.png"
     assert (ROOT / "docs" / "figures" / "pipeline_flow.png").exists()
     assert len(alt) >= 80 and alt.endswith("."), "the alt text is a full sentence that says what the picture shows"
-    assert all(not cell.get("attachments") for cell in cells if cell["cell_type"] == "markdown")
+    for i, cell in enumerate(cells):
+        if cell["cell_type"] != "markdown":
+            continue
+        assert not cell.get("attachments"), f"cell {i} embeds a picture as an attachment"
+        for shown in picture_targets(text(cell)):
+            assert shown.startswith("https://"), f"cell {i} shows a picture from {shown[:60]!r}, not a full https address"
+
+
+def test_picture_targets_finds_every_way_a_cell_can_show_a_picture():
+    cases = {
+        "![a](../docs/figures/x.png)": "../docs/figures/x.png",
+        '![a](../docs/figures/x.png "title")': "../docs/figures/x.png",
+        "![a](<../docs/figures/x.png>)": "../docs/figures/x.png",
+        "![a](../x.GIF)": "../x.GIF",
+        "![a](data:image/png;base64,AAAA)": "data:image/png;base64,AAAA",
+        '<img src="../docs/figures/x.png" width="400">': "../docs/figures/x.png",
+        "![a][fig]\n\n[fig]: ../docs/figures/x.png": "../docs/figures/x.png",
+        "![fig][]\n\n[fig]: <../x.webp>": "../x.webp",
+        "![a][missing]": "unresolved reference missing",
+        "![a](https://example.org/x.png)": "https://example.org/x.png",
+    }
+    for markdown, expected in cases.items():
+        assert picture_targets(markdown) == [expected], markdown
+    assert picture_targets("[the PNG file](../docs/figures/x.png)") == [], "a plain link is not a picture"
 
 
 LABELS = ("**What it does and why**", "**What goes in**", "**What comes out**", "**How to tell it worked**")
