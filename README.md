@@ -25,11 +25,22 @@ synthetic portraits and recognises real smiles poorly; the identity model was tr
 faces only and loses accuracy through the detector's own alignment (TAR 0.793), so recalibrate its threshold on
 your own enrolled photos. Real-face identity accuracy was not measured.
 
-## Licences: non-commercial research only
+## Licences: the trained models are for non-commercial use
 
-WIDER FACE is CC BY-NC-ND 4.0, the RetinaFace annotations are for non-commercial research (models trained with them
-included), DigiFace-1M is under the Microsoft Research Use of Data Agreement (trained models count as results under
-the same terms), and EmoNet-Face is CC BY 4.0. The trained models therefore inherit a non-commercial research licence.
+The code is ours, and the architectures come from published papers, so neither restricts the models. The torchvision
+ImageNet backbones carry no licence of their own. The restrictions come from the data each model learned from:
+
+- **Detector.** WIDER FACE is CC BY-NC-ND, and the InsightFace authors state that the RetinaFace annotations "(and
+  the models trained with these data) are available for non-commercial research purposes only".
+- **Identity.** DigiFace-1M is under Microsoft's Research Use of Data Agreement v1.0. Clause 5.5 makes models trained
+  on the data "Results", and clause 2.1 bars Results from any commercial offering.
+- **Expression.** EmoNet-Face is CC BY 4.0, which allows commercial use with attribution. LAION's dataset card bars
+  the data and models trained on it from high-stakes uses such as emotion recognition at work or school,
+  surveillance, law enforcement, credit, insurance and hiring. Its training crops were made with the detector above.
+
+Every face reaches the expression and identity models through the detector, so the pipeline as a whole is for
+non-commercial use; private use on your own photos is non-commercial, while selling it, offering it as a service or
+publishing the weights is not covered. This is a reading of the published terms, not legal advice.
 No data, face image, label, embedding or model weight is in this repository; a pre-commit hook enforces that
 (`git config core.hooksPath hooks`).
 
@@ -75,6 +86,18 @@ uv run facekit scan --models C:\Users\<you>\models --photos C:\Users\<you>\Pictu
 threshold in the model card was calibrated on synthetic faces only: check it on your own enrolled photos and pass
 `--threshold` to `enroll` when it needs changing. The gallery holds biometric data about real people, so keep it on
 your computer.
+
+To check the thresholds on your own people, give `evaluate` a folder with at least two photos per person:
+
+```bash
+uv run facekit evaluate --models C:\Users\<you>\models --people C:\Users\<you>\people --out C:\Users\<you>\eval
+```
+
+It runs every photo through the same detector, alignment and embedder as `scan`, and writes `report.json` (ROC AUC,
+TAR at FAR 1e-2 and 1e-3 with bootstrap intervals, the real false-accept rate at the model card's thresholds,
+rank-1 identification, open-set rates over random splits, and an indicative threshold), `scores.npz` (similarities
+only, never embeddings) and two figures. `tools/eval_london.py` runs the same evaluation on the Face Research Lab
+London Set (DeBruine and Jones, 2017, CC BY 4.0), downloaded to a local folder outside any synced folder.
 
 ```python
 from facekit.pipeline import FaceAnalyzer

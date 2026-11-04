@@ -85,7 +85,7 @@ def cosine_scores(embeddings: np.ndarray, pairs: np.ndarray) -> np.ndarray:
 
 def verification_report(scores: np.ndarray, same: np.ndarray, fars: tuple[float, ...] = (1e-2, 1e-3, 1e-4)) -> dict:
     """Returns ROC AUC, equal error rate, TAR and the threshold at each FAR, and the best-accuracy threshold."""
-    fpr, tpr, thresholds = roc_curve(same, scores)
+    fpr, tpr, thresholds = roc_curve(same, scores, drop_intermediate=False)   # all points: the EER needs them
     report: dict = {"auc": float(roc_auc_score(same, scores)), "n_pairs": int(len(same))}
     eer_index = int(np.nanargmin(np.abs(fpr - (1 - tpr))))
     report["eer"] = float((fpr[eer_index] + 1 - tpr[eer_index]) / 2)

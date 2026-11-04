@@ -4,6 +4,9 @@
         PEOPLE_DIR holds one folder per person (the folder name is the person's name) with a few clear photos each.
     facekit scan --models MODEL_DIR --photos PHOTOS_DIR --out results.jsonl [--gallery gallery.npz]
         Writes one JSON line per photo with every face's box, landmarks, expression and identity.
+    facekit evaluate --models MODEL_DIR --people PEOPLE_DIR --out OUT_DIR
+        Measures identity accuracy on one folder per person (at least two photos each) and reports how the model
+        card's thresholds behave on those faces; use it to recalibrate before trusting names.
 
 The gallery and any saved embeddings are biometric data about real people: keep them on this computer.
 """
@@ -67,6 +70,20 @@ def scan(models: Path, photos: Path, out: Path, gallery: Path | None = None, max
     return count
 
 
+def evaluate(models: Path, people: Path, out_dir: Path, n_boot: int = 1000, n_splits: int = 20) -> dict:
+    """Scores identity on a folder with one sub-folder per person; writes report.json, scores.npz and figures."""
+    from facekit import evaluate as ev
+
+    analyzer = FaceAnalyzer.from_model_dir(models)
+    card = json.loads((models / "model_card.json").read_text(encoding="utf-8"))["identity"]
+    if "threshold_1to1" not in card:
+        raise SystemExit("model_card.json has no identity threshold_1to1; this model card is too old for evaluate")
+    t11 = card["threshold_1to1"]
+    return ev.run_evaluation(analyzer.embed_largest_face, ev.people_folder_records(people), t11, card["threshold"],
+                             out_dir, title=people.name, n_boot=n_boot, n_splits=n_splits,
+                             extra={"models": str(models), "people": str(people)})
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="facekit", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -82,9 +99,19 @@ def main(argv: list[str] | None = None) -> int:
     p_scan.add_argument("--out", type=Path, required=True)
     p_scan.add_argument("--gallery", type=Path, default=None)
     p_scan.add_argument("--max-side", type=int, default=1280)
+    p_eval = sub.add_parser("evaluate", help="measure identity accuracy on one folder per person, to check thresholds")
+    p_eval.add_argument("--models", type=Path, required=True)
+    p_eval.add_argument("--people", type=Path, required=True)
+    p_eval.add_argument("--out", type=Path, required=True, help="folder for report.json, scores.npz and figures")
     args = parser.parse_args(argv)
     if args.command == "enroll":
         print(json.dumps(enroll(args.models, args.people, args.gallery, args.threshold), indent=2))
+    elif args.command == "evaluate":
+        report = evaluate(args.models, args.people, args.out)
+        v = report["verification"]
+        print(f"{report['n_people']} people, {report['n_photos']} photos with a face "
+              f"({report['failed_to_acquire']['count']} without); AUC {v['auc']:.4f}, "
+              f"TAR at FAR 1e-3 {v['tar@far=0.001']:.3f}; report in {args.out / 'report.json'}")
     else:
         print(f"{scan(args.models, args.photos, args.out, args.gallery, args.max_side)} photos written to {args.out}")
     return 0

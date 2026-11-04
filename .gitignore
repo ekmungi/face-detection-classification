@@ -24,3 +24,6 @@ notebooks/*.executed.ipynb
 results*.jsonl
 gallery*.npz
 !docs/figures/*.png
+
+# Evaluation reports can name real people
+report.json

@@ -244,7 +244,7 @@ def count_images(folder: str | Path) -> int:
     return sum(
         1
         for path in root.rglob("*")
-        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES and not path.name.startswith("._")
     )
 
 

@@ -237,3 +237,9 @@ def test_fetch_downloads_extracts_and_counts(tmp_path):
     opener = FakeOpener({})
     assert datasets.fetch([source], tmp_path, opener=opener)["counts"] == {"tiny": 2}
     assert opener.calls == []
+
+
+def test_count_images_skips_macos_resource_forks(tmp_path):
+    (tmp_path / "001_03.jpg").write_bytes(b"x")
+    (tmp_path / "._001_03.jpg").write_bytes(b"resource fork")
+    assert datasets.count_images(tmp_path) == 1

@@ -11,7 +11,7 @@ DIGIFACE = "https://facesyntheticspubwedata.z6.web.core.windows.net/wacv-2023"
 
 WIDER_LICENCE = "CC BY-NC-ND 4.0 (non-commercial research)"
 WIDER_LICENCE_URL = f"{HF}/CUHK-CSE/wider_face"
-DIGIFACE_LICENCE = "Microsoft Research Use of Data Agreement 1.0 (non-commercial research)"
+DIGIFACE_LICENCE = "Microsoft Research Use of Data Agreement v1.0 (trained models are Results; no commercial offering)"
 DIGIFACE_LICENCE_URL = "https://github.com/microsoft/DigiFace1M/blob/main/LICENSE"
 EMONET_LICENCE = "CC BY 4.0"
 
@@ -24,7 +24,7 @@ RETINAFACE_LABELS = Source(
     name="retinaface_labels",
     url=f"{HF}/yuuMQ/Retinaface_WiderFaceDataset/resolve/main/widerface/train/label.txt",
     filename="retinaface_train_label.txt", size=17147541,
-    licence="Research annotations by the RetinaFace authors (no licence stated on the mirror)",
+    licence="InsightFace: the annotations and models trained with them are for non-commercial research only",
     licence_url="https://github.com/deepinsight/insightface/tree/master/detection/retinaface")
 WIDER_VAL = Source(
     name="wider_val", url=f"{HF}/zhouxzh/retinaface_widerface/resolve/main/val/val-00000-of-00001.parquet",
@@ -63,7 +63,7 @@ def digiface_part(part: str) -> Source:
 
 
 # Identity test on real people who signed consent: Face Research Lab London Set, neutral and smiling front views.
-LONDON_LICENCE_URL = "https://figshare.com/articles/dataset/Face_Research_Lab_London_Set/5047666"
+LONDON_LICENCE_URL = "https://doi.org/10.6084/m9.figshare.5047666.v5"
 LONDON_NEUTRAL = Source(
     name="london_neutral", url="https://ndownloader.figshare.com/files/8541961", filename="london_neutral_front.zip",
     size=33860607, licence="CC BY 4.0", licence_url=LONDON_LICENCE_URL)
@@ -71,8 +71,9 @@ LONDON_SMILING = Source(
     name="london_smiling", url="https://ndownloader.figshare.com/files/8541964", filename="london_smiling_front.zip",
     size=53522950, licence="CC BY 4.0", licence_url=LONDON_LICENCE_URL)
 
-# ImageNet weights for the detector and expression backbones (torchvision, BSD-3 code; ImageNet terms for weights).
-IMAGENET_NOTE = "torchvision ImageNet-1k weights: BSD-3-Clause code, weights under the ImageNet research terms"
+# ImageNet weights for the detector and expression backbones. torchvision attaches no licence to IMAGENET1K_V1 and
+# says only that weights "may" carry terms from their training data; the code is BSD-3-Clause.
+IMAGENET_NOTE = "torchvision ImageNet-1k weights (IMAGENET1K_V1): no licence attached; torchvision code BSD-3-Clause"
 
 
 def all_sources(digiface_train_parts: list[str], digiface_test_part: str, emonet_hq_files: int) -> list[Source]:
