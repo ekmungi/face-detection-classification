@@ -1,6 +1,6 @@
 """Runs ON the Colab machine: updates the clone, then starts the end-to-end notebook as a detached papermill process.
 
-Environment: MODE (smoke or full), EXP, RUN_ID, and optionally DET_BUDGET_MIN, ID_BUDGET_MIN, EXPR_BUDGET_MIN.
+Environment: MODE (smoke, medium or full), EXP, RUN_ID, and optionally DET_BUDGET_MIN, ID_BUDGET_MIN, EXPR_BUDGET_MIN.
 The process runs in its own session, so it survives the `colab exec` command that started it. A run that is already
 running is not started twice. The executed notebook is written next to the run's other files.
 """

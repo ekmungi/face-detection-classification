@@ -18,9 +18,9 @@ ARTIFACTS_PARENT = "ResearchArtifacts"
 # Where the mounted Drive appears on a Colab machine.
 DRIVE_MOUNT = Path("/content/drive")
 
-# Experiment folders are exp-NNN or the throwaway "scratch"; run folders are run-NNN or smoke-NNN.
+# Experiment folders are exp-NNN or the throwaway "scratch"; run folders are run-NNN, smoke-NNN or medium-NNN.
 EXP_PATTERN = re.compile(r"^(exp-\d{3}|scratch)$")
-RUN_PATTERN = re.compile(r"^(run|smoke)-\d{3}$")
+RUN_PATTERN = re.compile(r"^(run|smoke|medium)-\d{3}$")
 
 
 def project_root():
@@ -78,13 +78,25 @@ def work_data_dir(environ=None, on_colab=None, home=None):
 
 
 def check_names(exp, run_id):
-    """Raises ValueError unless exp looks like exp-NNN (or scratch) and run_id like run-NNN (or smoke-NNN)."""
+    """Raises ValueError unless exp looks like exp-NNN (or scratch) and run_id like run-NNN (or smoke-NNN, medium-NNN)."""
     if not EXP_PATTERN.match(exp):
         raise ValueError(f"experiment folder {exp!r} must be exp-NNN or scratch")
     if not RUN_PATTERN.match(run_id):
-        raise ValueError(f"run id {run_id!r} must be run-NNN or smoke-NNN")
-    if run_id.startswith("smoke") != (exp == "scratch"):
-        raise ValueError("smoke runs live in scratch, and real runs live in an exp-NNN folder")
+        raise ValueError(f"run id {run_id!r} must be run-NNN, smoke-NNN or medium-NNN")
+    if run_id.startswith(("smoke", "medium")) != (exp == "scratch"):
+        raise ValueError("smoke and medium runs live in scratch, and real runs live in an exp-NNN folder")
+
+
+# The run-id prefix that each notebook mode uses, so a run folder's name says which mode made it.
+RUN_PREFIX_FOR_MODE = {"smoke": "smoke", "medium": "medium", "full": "run"}
+
+
+def check_run_name_for_mode(mode, run_id):
+    """Raises ValueError unless run_id starts with the prefix of the notebook mode: smoke-, medium- or run- (full)."""
+    prefix = RUN_PREFIX_FOR_MODE[mode]
+    if not run_id.startswith(prefix + "-"):
+        raise ValueError(f"MODE is {mode}, so RUN_ID must be a {prefix}-NNN name that no earlier run used, "
+                         f"not {run_id!r}: change RUN_ID in the parameters cell")
 
 
 def exp_dir(exp, root=None):

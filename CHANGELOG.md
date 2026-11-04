@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.6 - 2026-11-04
+
+- A third notebook mode, `MODE = "medium"`, between smoke and full: one run on a Colab L4 that gives meaningful
+  results with all eight expressions. It trains identity on 1,000 DigiFace identities from the part already used by
+  smoke mode and tests on 200, uses 3,000 WIDER training photos and 500 test photos, reads all five EmoNet-Face Binary
+  files (smoke mode's one file holds only happy, sad and fear) and the one HQ file, and trains to its own budgets of
+  6, 8 and 3 minutes, which replace the three budget parameters. The notebook estimates 30 to 45 minutes; the
+  estimate has not been measured. Medium runs live in `scratch` as `medium-NNN`.
+- Smoke and medium mode take their WIDER photos at even steps through each list, because both lists are sorted by the
+  kind of event: the first 3,000 training photos covered 13 of the 61 kinds, and 3,000 at even steps cover 57; 500
+  validation photos at even steps cover all 61. `prepare.evenly_spaced` and `wider_val_records(spread=True)` do this.
+- Portraits in which no face is found are centre-cropped in every mode but full.
+- The notebook records its mode in the run folder (`run_mode.txt`, written by `runlib.claim_run_mode`) and stops with
+  a plain message when the folder already holds a run of another mode, because the trainings reuse the plans they
+  find there. It also stops at once on an unknown `MODE`, and when `RUN_ID` does not start with the mode
+  (`paths.check_run_name_for_mode`: `smoke-`, `medium-`, or `run-` for a full run).
+- Every explanation in the notebook is rewritten to be scanned. Each cell above a code cell has a `###` step heading
+  and four bold labels (what it does and why, what goes in, what comes out, how to tell it worked), each a list of
+  full sentences, with tables where values are compared, such as the three modes side by side. The code cells open
+  each numbered step with a matching comment; their logic is unchanged apart from the medium-mode changes above.
+  Tests hold the four labels, the matching step comments, the list form and the length of each item, and keep run
+  folder names out of the text. An independent check against the code corrected eleven statements, among them the
+  smoke mode's held-out photos (30, not 60) and the CPU timing photo, which had no face in the full run.
+- The pipeline figure's network boxes say a little more about what is inside each network: the detector's four heads
+  on its stride-4 map, the expression model's eight scores divided by the temperature, and the identity model's
+  CosFace margin, used only in training. The figure keeps its six blocks.
+- The notebook links the figure in `docs/figures/` instead of embedding it, because Colab cannot show a notebook
+  attachment and the embedded copy more than doubled the notebook's size (about 118 KB without it, 255 KB with it). The test now checks the link,
+  the alt text and that no cell carries an attachment.
+
 ## 0.2.5 - 2026-11-04
 
 - The notebook's explanations no longer name particular run or experiment folders; the parameters cell says what

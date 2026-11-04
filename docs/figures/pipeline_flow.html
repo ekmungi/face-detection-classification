@@ -59,7 +59,7 @@
     <div class="diagram-container">
       <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="pipeline-flow-title pipeline-flow-desc">
         <title id="pipeline-flow-title">How one photo becomes a result for each face</title>
-        <desc id="pipeline-flow-desc">A photo goes through a face detector, then an alignment step that cuts two crops of each face; one crop goes to the expression model and the other to the identity model, whose embedding is matched against a gallery of enrolled people.</desc>
+        <desc id="pipeline-flow-desc">A photo goes through a face detector with a ResNet-18 backbone and four heads, then an alignment step that cuts two crops of each face; one crop goes to the expression model, whose eight scores are divided by a temperature, and the other to the identity model, whose 512-number embedding is matched against a gallery of enrolled people.</desc>
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5a6879"/></marker>
         </defs>
@@ -71,8 +71,8 @@
         <line x1="184" y1="282" x2="228" y2="282" stroke="#5a6879" stroke-width="1.2" marker-end="url(#arrow)"/>
         <line x1="444" y1="282" x2="488" y2="282" stroke="#5a6879" stroke-width="1.2" marker-end="url(#arrow)"/>
         <!-- Alignment to the two models: one bend each, entering through the bottom and the top edge. -->
-        <path d="M 704,268 H 868 Q 876,268 876,260 V 172" fill="none" stroke="#5a6879" stroke-width="1.2" marker-end="url(#arrow)"/>
-        <path d="M 704,296 H 868 Q 876,296 876,304 V 392" fill="none" stroke="#5a6879" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <path d="M 704,268 H 868 Q 876,268 876,260 V 180" fill="none" stroke="#5a6879" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <path d="M 704,296 H 868 Q 876,296 876,304 V 384" fill="none" stroke="#5a6879" stroke-width="1.2" marker-end="url(#arrow)"/>
         <!-- Identity to gallery: straight, same y. -->
         <line x1="984" y1="438" x2="1028" y2="438" stroke="#5a6879" stroke-width="1.2" marker-end="url(#arrow)"/>
 
@@ -91,14 +91,15 @@
         <text x="112" y="300" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">RGB, any size</text>
         <text x="112" y="316" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">≤ 1,280 px</text>
 
-        <!-- 1 Detector: trained network. -->
-        <rect x="228" y="236" width="216" height="92" rx="6" fill="#f1efec"/>
-        <rect x="228" y="236" width="216" height="92" rx="6" fill="#ffffff" stroke="#132030" stroke-width="1"/>
-        <rect x="236" y="244" width="56" height="12" rx="2" fill="transparent" stroke="rgba(19,32,48,0.40)" stroke-width="0.8"/>
-        <text x="264" y="253" fill="#132030" font-size="8" font-family="'Fira Mono', monospace" text-anchor="middle" letter-spacing="0.08em">NETWORK</text>
-        <text x="336" y="280" fill="#132030" font-size="16" font-weight="600" font-family="'Fira Sans', sans-serif" text-anchor="middle">1  Detector</text>
-        <text x="336" y="300" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">ResNet-18 · 11.5 M</text>
-        <text x="336" y="316" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">box · 5 landmarks · score</text>
+        <!-- 1 Detector: trained network. Taller than the fixed steps, because a network carries one more line. -->
+        <rect x="228" y="228" width="216" height="108" rx="6" fill="#f1efec"/>
+        <rect x="228" y="228" width="216" height="108" rx="6" fill="#ffffff" stroke="#132030" stroke-width="1"/>
+        <rect x="236" y="236" width="56" height="12" rx="2" fill="transparent" stroke="rgba(19,32,48,0.40)" stroke-width="0.8"/>
+        <text x="264" y="245" fill="#132030" font-size="8" font-family="'Fira Mono', monospace" text-anchor="middle" letter-spacing="0.08em">NETWORK</text>
+        <text x="336" y="272" fill="#132030" font-size="16" font-weight="600" font-family="'Fira Sans', sans-serif" text-anchor="middle">1  Detector</text>
+        <text x="336" y="292" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">ResNet-18 · 11.5 M</text>
+        <text x="336" y="308" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">4 heads, stride-4 map</text>
+        <text x="336" y="324" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">box · 5 landmarks · score</text>
 
         <!-- 2 Alignment: no trained weights. -->
         <rect x="488" y="236" width="216" height="92" rx="6" fill="#f1efec"/>
@@ -106,26 +107,28 @@
         <rect x="496" y="244" width="72" height="12" rx="2" fill="transparent" stroke="rgba(90,104,121,0.50)" stroke-width="0.8"/>
         <text x="532" y="253" fill="#5a6879" font-size="8" font-family="'Fira Mono', monospace" text-anchor="middle" letter-spacing="0.08em">NO WEIGHTS</text>
         <text x="596" y="280" fill="#132030" font-size="16" font-weight="600" font-family="'Fira Sans', sans-serif" text-anchor="middle">2  Alignment</text>
-        <text x="596" y="300" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">rotate + scale to</text>
-        <text x="596" y="316" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">a 5-point template</text>
+        <text x="596" y="300" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">rotate + scale to the</text>
+        <text x="596" y="316" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">ArcFace 5-point template</text>
 
         <!-- 3 Expression: trained network. -->
-        <rect x="768" y="80" width="216" height="92" rx="6" fill="#f1efec"/>
-        <rect x="768" y="80" width="216" height="92" rx="6" fill="#ffffff" stroke="#132030" stroke-width="1"/>
-        <rect x="776" y="88" width="56" height="12" rx="2" fill="transparent" stroke="rgba(19,32,48,0.40)" stroke-width="0.8"/>
-        <text x="804" y="97" fill="#132030" font-size="8" font-family="'Fira Mono', monospace" text-anchor="middle" letter-spacing="0.08em">NETWORK</text>
-        <text x="876" y="124" fill="#132030" font-size="16" font-weight="600" font-family="'Fira Sans', sans-serif" text-anchor="middle">3  Expression</text>
-        <text x="876" y="144" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">ConvNeXt-Tiny · 27.8 M</text>
-        <text x="876" y="160" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">→ 8 probabilities</text>
+        <rect x="768" y="72" width="216" height="108" rx="6" fill="#f1efec"/>
+        <rect x="768" y="72" width="216" height="108" rx="6" fill="#ffffff" stroke="#132030" stroke-width="1"/>
+        <rect x="776" y="80" width="56" height="12" rx="2" fill="transparent" stroke="rgba(19,32,48,0.40)" stroke-width="0.8"/>
+        <text x="804" y="89" fill="#132030" font-size="8" font-family="'Fira Mono', monospace" text-anchor="middle" letter-spacing="0.08em">NETWORK</text>
+        <text x="876" y="116" fill="#132030" font-size="16" font-weight="600" font-family="'Fira Sans', sans-serif" text-anchor="middle">3  Expression</text>
+        <text x="876" y="136" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">ConvNeXt-Tiny · 27.8 M</text>
+        <text x="876" y="152" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">8-score head ÷ temperature</text>
+        <text x="876" y="168" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">→ 8 probabilities</text>
 
         <!-- 4 Identity: trained network. -->
-        <rect x="768" y="392" width="216" height="92" rx="6" fill="#f1efec"/>
-        <rect x="768" y="392" width="216" height="92" rx="6" fill="#ffffff" stroke="#132030" stroke-width="1"/>
-        <rect x="776" y="400" width="56" height="12" rx="2" fill="transparent" stroke="rgba(19,32,48,0.40)" stroke-width="0.8"/>
-        <text x="804" y="409" fill="#132030" font-size="8" font-family="'Fira Mono', monospace" text-anchor="middle" letter-spacing="0.08em">NETWORK</text>
-        <text x="876" y="436" fill="#132030" font-size="16" font-weight="600" font-family="'Fira Sans', sans-serif" text-anchor="middle">4  Identity</text>
-        <text x="876" y="456" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">IResNet-50 · 43.6 M</text>
-        <text x="876" y="472" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">→ 512-number embedding</text>
+        <rect x="768" y="384" width="216" height="108" rx="6" fill="#f1efec"/>
+        <rect x="768" y="384" width="216" height="108" rx="6" fill="#ffffff" stroke="#132030" stroke-width="1"/>
+        <rect x="776" y="392" width="56" height="12" rx="2" fill="transparent" stroke="rgba(19,32,48,0.40)" stroke-width="0.8"/>
+        <text x="804" y="401" fill="#132030" font-size="8" font-family="'Fira Mono', monospace" text-anchor="middle" letter-spacing="0.08em">NETWORK</text>
+        <text x="876" y="428" fill="#132030" font-size="16" font-weight="600" font-family="'Fira Sans', sans-serif" text-anchor="middle">4  Identity</text>
+        <text x="876" y="448" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">IResNet-50 · 43.6 M</text>
+        <text x="876" y="464" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">→ 512-number embedding</text>
+        <text x="876" y="480" fill="#5a6879" font-size="12" font-family="'Fira Mono', monospace" text-anchor="middle">CosFace margin: train only</text>
 
         <!-- 5 Gallery match: the focal block, because its threshold is the weak point. -->
         <rect x="1028" y="392" width="212" height="92" rx="6" fill="#f1efec"/>

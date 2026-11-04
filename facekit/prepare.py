@@ -46,6 +46,27 @@ def iter_parquet(paths: list[Path], columns: list[str], batch_size: int = 64) ->
             yield from batch.to_pylist()
 
 
+def parquet_row_count(path: Path) -> int:
+    """Returns the number of rows in a parquet file, read from its footer without reading the rows."""
+    import pyarrow.parquet as pq
+    return pq.ParquetFile(path).metadata.num_rows
+
+
+def evenly_spaced_indices(total: int, n: int | None) -> list[int]:
+    """Returns n positions at even steps from the start to the end of a list of `total` items, or all of them.
+
+    The WIDER lists are sorted by the kind of event, so the first n items would cover only a few kinds.
+    """
+    if not n or n >= total:
+        return list(range(total))
+    return [i * total // n for i in range(n)]
+
+
+def evenly_spaced(items: list, n: int | None) -> list:
+    """Returns n items taken at even steps through the list (all of them when n is None or not smaller)."""
+    return [items[i] for i in evenly_spaced_indices(len(items), n)]
+
+
 def image_bytes(cell) -> bytes:
     """Returns the encoded bytes of a Hugging Face image cell ({"bytes": ..., "path": ...}) or raw bytes."""
     return cell["bytes"] if isinstance(cell, dict) else cell
@@ -129,7 +150,8 @@ def build_emonet_array(paths: list[Path], selection: list[tuple[int, int, str]],
 
     Each item's id is the SHA-1 of its image bytes, so another array can be checked for duplicates; images whose hash
     is in `exclude_hashes` are skipped ("duplicates"). Portraits where the detector finds no face are left out
-    ("no_face") unless `fallback_center_crop` is set, which only the smoke run uses with its barely trained detector.
+    ("no_face") unless `fallback_center_crop` is set, which the smoke and medium runs use with their briefly trained
+    detectors.
     The description's "groups" lists each kept item's prompt, for the grouped split.
     """
     import hashlib
@@ -186,11 +208,21 @@ def wider_boxes_xyxy(cell) -> np.ndarray:
     return boxes
 
 
-def wider_val_records(parquet: Path, max_items: int | None = None) -> Iterator[dict]:
-    """Yields validation images with ground truth: {"path", "image" RGB, "boxes" xyxy, "keep": {easy, medium, hard}}."""
+def wider_val_records(parquet: Path, max_items: int | None = None, spread: bool = False) -> Iterator[dict]:
+    """Yields validation images with ground truth: {"path", "image" RGB, "boxes" xyxy, "keep": {easy, medium, hard}}.
+
+    With `spread`, the `max_items` images are taken at even steps through the file instead of from its start, because
+    the file is sorted by the kind of event.
+    """
     columns = ["image", "image_path", "bboxes", "easy_keep_indices", "medium_keep_indices", "hard_keep_indices"]
+    keep = set(evenly_spaced_indices(parquet_row_count(parquet), max_items)) if spread and max_items else None
     for n, row in enumerate(iter_parquet([parquet], columns, batch_size=16)):
-        if max_items and n >= max_items:
+        if keep is not None:
+            if n > max(keep):
+                return
+            if n not in keep:
+                continue
+        elif max_items and n >= max_items:
             return
         boxes = wider_boxes_xyxy(row["bboxes"])
         yield {

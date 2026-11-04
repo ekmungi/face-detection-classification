@@ -41,6 +41,41 @@ def write_once(path, content):
     return True
 
 
+# The file in a run folder that names the notebook mode (smoke, medium or full) the run belongs to.
+RUN_MODE_FILE = "run_mode.txt"
+
+
+def claim_run_mode(run_dir, mode):
+    """Records the notebook mode in a run folder, and stops when the folder holds a run of another mode.
+
+    The trainings reuse the plans they find in their run folder, so a run started in the folder of a run of another
+    mode would train on that run's schedule. A folder from before the mode file existed is known by the mode in its
+    summary.json; a folder with training plans but no record of its mode also stops the run.
+    """
+    run_dir = Path(run_dir)
+    marker = run_dir / RUN_MODE_FILE
+    summary = run_dir / "summary.json"
+    if marker.exists():
+        recorded = marker.read_text(encoding="utf-8").strip()
+    elif summary.exists():
+        recorded = json.loads(summary.read_text(encoding="utf-8")).get("mode")
+    else:
+        recorded = None
+    has_plans = any((run_dir / part / "plan.json").exists() for part in ("detector", "identity", "expression"))
+    if recorded is None and has_plans:
+        raise RuntimeError(
+            f"The run folder {run_dir} holds an earlier run whose mode is not recorded, and this is a {mode} run. "
+            "The trainings reuse the plans in their run folder, so set RUN_ID in the parameters cell to a name that "
+            "no earlier run used, then run the notebook again.")
+    if recorded is not None and recorded != mode:
+        raise RuntimeError(
+            f"The run folder {run_dir} already holds a {recorded} run, and this is a {mode} run. The trainings reuse "
+            "the plans in their run folder, so set RUN_ID in the parameters cell to a name that no earlier run used, "
+            "then run the notebook again.")
+    if not marker.exists():
+        marker.write_text(mode + "\n", encoding="utf-8")
+
+
 def append_jsonl(path, payload):
     """Appends payload as one JSON line to path, creating the file when needed; history files only ever grow."""
     with open(path, "a", encoding="utf-8") as handle:

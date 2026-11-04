@@ -82,8 +82,24 @@ def test_run_dir_builds_the_expected_path(tmp_path):
     assert paths.run_dir("scratch", "smoke-001", tmp_path) == tmp_path / "scratch" / "smoke-001"
 
 
+def test_a_medium_run_lives_in_scratch_like_a_smoke_run(tmp_path):
+    assert paths.run_dir("scratch", "medium-001", tmp_path) == tmp_path / "scratch" / "medium-001"
+
+
+@pytest.mark.parametrize("mode, run_id", [("smoke", "smoke-001"), ("medium", "medium-002"), ("full", "run-004")])
+def test_a_run_name_that_matches_the_notebook_mode_is_accepted(mode, run_id):
+    paths.check_run_name_for_mode(mode, run_id)
+
+
+@pytest.mark.parametrize("mode, run_id", [("medium", "smoke-001"), ("full", "medium-001"), ("smoke", "run-001")])
+def test_a_run_name_of_another_mode_is_refused_with_a_plain_message(mode, run_id):
+    with pytest.raises(ValueError) as error:
+        paths.check_run_name_for_mode(mode, run_id)
+    assert mode in str(error.value) and "RUN_ID" in str(error.value)
+
+
 @pytest.mark.parametrize("exp, run_id", [("exp-1", "run-001"), ("exp-001", "run-1"), ("exp-001", "smoke-001"),
-                                         ("scratch", "run-001"), ("experiment", "run-001")])
+                                         ("exp-001", "medium-001"), ("scratch", "run-001"), ("experiment", "run-001")])
 def test_bad_names_are_rejected(exp, run_id):
     with pytest.raises(ValueError):
         paths.check_names(exp, run_id)
