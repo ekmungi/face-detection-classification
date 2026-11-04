@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 - 2026-11-04
+
+- The end-to-end notebook now runs on a Colab kernel opened from VS Code or the browser. A new first setup cell
+  clones the repository on a Colab machine when the clone is missing, and it stops at once, with a plain message,
+  on a Colab machine without an NVIDIA GPU (a TPU or CPU machine), where the notebook used to fail later on a
+  missing `cv2` or train on the CPU. On this laptop and under `tools/colab_launch.py` nothing changes.
+- A test now fails when `notebooks/03_end_to_end.ipynb` is out of date with `tools/build_notebook.py`.
+
 ## 0.2.0 - 2026-11-04
 
 - `facekit evaluate` measures identity accuracy on any folder with one sub-folder per person, through the same

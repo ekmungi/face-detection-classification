@@ -41,6 +41,21 @@ EXPR_BUDGET_MIN = 12.0    # minutes for expression training
 """, tags=["parameters"])
 
 md("## 1. Setup")
+code('''
+# Bootstrap for a Colab kernel opened from VS Code or the browser (SPEC-004). It does nothing on this laptop.
+# On a Colab machine it stops at once without an NVIDIA GPU, and it clones the code when the clone is missing.
+import os, shutil, subprocess
+REPO_URL = "https://github.com/ekmungi/face-detection-classification"
+COLAB_CLONE = "/content/face-detection-classification"
+if os.path.isdir("/content"):              # a Colab machine: the same test that paths.py uses
+    if shutil.which("nvidia-smi") is None:
+        raise RuntimeError(
+            "This notebook needs a Colab GPU machine (T4, L4 or A100), and this machine has no NVIDIA GPU "
+            "(it is a TPU or CPU machine). Remove this server (Ctrl+Shift+P, Colab: Remove Server) and start "
+            "a new one with GPU.")
+    if not os.path.isdir(COLAB_CLONE):
+        subprocess.run(["git", "clone", "--depth", "1", REPO_URL, COLAB_CLONE], check=True)
+''')
 code("""
 import os, sys, json, time, subprocess, shutil, hashlib, platform
 from pathlib import Path

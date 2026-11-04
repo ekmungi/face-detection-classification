@@ -73,6 +73,15 @@ colab exec -s fdc-run --env EXP=exp-001 --env RUN_ID=run-001 -f tools/colab_stat
 `MODE=smoke` runs every cell on tiny subsets in about fifteen minutes; `MODE=full` is the real run (about two
 hours). Each training plans its epochs from the speed it measures, so it finishes within its time budget.
 
+### Opening the notebook in VS Code on a Colab GPU
+
+With the Jupyter and Google Colab extensions installed, open `notebooks/03_end_to_end.ipynb`, click Select Kernel,
+then Colab, New Colab Server, **GPU** and a machine (the smoke run was tested on an L4; the full run needs an A100),
+and run the cells in order. The first setup cell clones this repository onto the Colab machine, and it stops with a
+message on a TPU or CPU machine, because the notebook needs a CUDA GPU. Set `MODE` in the first code cell. The
+notebook does not mount Google Drive, so its results stay in `/content/artifacts` and are lost with the machine:
+download what you want to keep before you run `Colab: Remove Server`.
+
 ## Using the models on a laptop
 
 The run writes `models/` with `detector.onnx`, `expression.onnx`, `embedder.onnx`, the PyTorch checkpoints and
