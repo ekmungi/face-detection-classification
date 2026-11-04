@@ -12,6 +12,19 @@ in this project; none is a model that was already trained for a face task.
 Each face is aligned to a fixed 112-pixel template from its five landmarks before the expression and identity models
 see it, and the same alignment code runs in training and in the pipeline.
 
+## Results of the first full run (2026-11-04, one A100, about an hour)
+
+| Model | Test | Result |
+|---|---|---|
+| Detector | WIDER FACE validation, AP at IoU 0.5 with the official easy / medium / hard face lists (VOC-style) | 0.857 / 0.845 / 0.753 |
+| Expression | EmoNet-Face Binary held-out portraits (318, grouped by prompt) | accuracy 0.849, macro-F1 0.663 |
+| Identity | 500 unseen DigiFace identities, 36,000 images | AUC 0.997, TAR 0.920 at FAR 1e-3, rank-1 0.938 |
+
+Known limits: the detector misses many faces that fill the whole frame; the expression model was trained on
+synthetic portraits and recognises real smiles poorly; the identity model was trained and calibrated on synthetic
+faces only and loses accuracy through the detector's own alignment (TAR 0.793), so recalibrate its threshold on
+your own enrolled photos. Real-face identity accuracy was not measured.
+
 ## Licences: non-commercial research only
 
 WIDER FACE is CC BY-NC-ND 4.0, the RetinaFace annotations are for non-commercial research (models trained with them
