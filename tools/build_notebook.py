@@ -80,7 +80,7 @@ RUN = paths.run_dir(EXP, RUN_ID)
 RUN.mkdir(parents=True, exist_ok=True)
 FIG = RUN / "figures"; FIG.mkdir(exist_ok=True)
 MODELS = RUN / "models"; MODELS.mkdir(exist_ok=True)
-DATA = paths.work_data_dir(); RAW = DATA / "raw"; ARR = DATA / "arrays"
+DATA = paths.work_data_dir(); RAW = DATA / "raw"; ARR = DATA / "arrays" / MODE   # smoke and full never share arrays
 RAW.mkdir(parents=True, exist_ok=True); ARR.mkdir(parents=True, exist_ok=True)
 SUMMARY = {"mode": MODE, "run": str(RUN), "started": time.strftime("%Y-%m-%d %H:%M:%S")}
 CHECKS = []

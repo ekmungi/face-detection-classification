@@ -1,97 +1,82 @@
 # face-detection-classification
 
-A research project built with the Jeeves Colab workflow: write the code here, check it in notebooks on this computer, run it on a
-rented Google Colab machine, and keep a record of every run. `specs/exp-001_first-experiment.toml` states the first question.
-The starter code trains a small classifier on MNIST so that the plumbing can be checked; replace `data.py`, `augment.py`,
-`models.py` and `models_extra.py` with the project's own, and keep the rest.
+Detect every face in a photo, classify its expression, and identify whose face it is. All three models are trained
+in this project; none is a model that was already trained for a face task.
 
-## Where things live
-
-One project has three places, and each place has one job.
-
-| Place | Location on this computer | Synced with | Holds |
+| Model | What it does | Architecture | Trained on |
 |---|---|---|---|
-| Notes | `<vault>\01 PROJECTS\<Project Name>\` | Obsidian | the plan, decisions, tasks and research notes |
-| Code (this repository) | `C:\Users\<you>\Dev\face-detection-classification\` | GitHub (public) | everything below except artifacts |
-| Artifacts | `C:\Users\<you>\ResearchArtifacts\face-detection-classification\` | Google Drive (two-way) | kept datasets, scratch work, experiments and their runs |
+| Detector | finds faces and five landmarks (eyes, nose, mouth corners) | CenterFace-style, ResNet-18 ImageNet backbone | WIDER FACE with the RetinaFace landmark annotations |
+| Expression | neutral, happy, sad, surprise, fear, disgust, anger, contempt | ConvNeXt-Tiny, ImageNet backbone | EmoNet-Face Binary (synthetic portraits), aligned with our detector |
+| Identity | a 512-number face embedding compared by cosine similarity | IResNet from scratch, CosFace margin | DigiFace-1M (synthetic identities rendered from consented scans) |
 
-A Colab machine gets the code by cloning this public repository and reads and writes artifacts through the mounted Drive.
-Nothing from the artifacts folder is ever committed, so the repository holds no data, checkpoints or patient information. Notebook
-outputs are never committed either: run `python tools/strip_notebook_outputs.py` before a commit (`--check` only reports).
+Each face is aligned to a fixed 112-pixel template from its five landmarks before the expression and identity models
+see it, and the same alignment code runs in training and in the pipeline.
 
-### This repository
+## Licences: non-commercial research only
 
-| Folder or file | What it holds |
-|---|---|
-| Helper scripts at the root, `train.py` | `data.py`, `datastore.py`, `augment.py`, `models.py`, `models_extra.py`, `trainer.py`, `callbacks.py`, `checks.py`, `quicktrain.py`, `runlib.py`, `paths.py` |
-| `run_eval.py` | optional: the entry point for an evaluation-only run (`pipeline = "evaluate"`); it calls `evaluation.score`, a file you write for the pretrained model |
-| `specs/` | `exp-NNN_<slug>.toml`, one specification per experiment |
-| `notebooks/` | `01_helpers.ipynb` (stage 2), `02_pipeline.ipynb` (stages 3 and 4) |
-| `tests/`, `tools/` | unit tests; `run_notebook_local.py` runs a notebook cell by cell on this computer; `strip_notebook_outputs.py` |
-| `README.md`, `docs/figures/` | the method in words, and result pictures copied here by hand after review |
+WIDER FACE is CC BY-NC-ND 4.0, the RetinaFace annotations are for non-commercial research (models trained with them
+included), DigiFace-1M is under the Microsoft Research Use of Data Agreement (trained models count as results under
+the same terms), and EmoNet-Face is CC BY 4.0. The trained models therefore inherit a non-commercial research licence.
+No data, face image, label, embedding or model weight is in this repository; a pre-commit hook enforces that
+(`git config core.hooksPath hooks`).
 
-### Data: fetch or store
+## Layout
 
-Each dataset has one of two modes, set in the experiment specification (`[data] mode`) and overridable with `--data-mode`.
+- `facekit/`: the package. `det_model.py`, `det_data.py`, `det_eval.py`, `det_task.py` (detector); `expression.py`;
+  `identity.py`; `align.py`; `engine.py` (the shared training loop: mixed precision, warm-up and cosine schedule,
+  checkpoints, exact resume, heartbeat, time budget); `tasks.py`; `arrays.py` (decoded image arrays, resumable
+  sampler, grouped splits); `augment.py` (GPU augmentation); `metrics.py`; `datasets.py` (downloads with size and
+  checksum checks and safe extraction, written by Antigravity CLI against tests written first); `sources.py` (every
+  dataset with its licence); `prepare.py`; `export.py` (ONNX); `detect.py`, `pipeline.py`, `gallery.py`, `cli.py`.
+- `notebooks/03_end_to_end.ipynb`: data, checks, the three trainings, the tests, figures, ONNX export and the model
+  card, in one run. It is generated from `tools/build_notebook.py`.
+- `train.py`: identity training from the command line (the notebook runs it as a second process).
+- `tools/colab_launch.py`, `tools/colab_status.py`: start the notebook headless on a Colab machine and read its state.
 
-| Mode | Use it for | What a session does | Drive space |
-|---|---|---|---|
-| `fetch` (default) | Public data that is easy to download, such as the torchvision datasets | Downloads it onto the machine's own disk (`/content/data` on Colab) | none |
-| `store` | Data that needs a login, or that you chose to keep | Copies it from `artifacts/data/` and unpacks a zip onto the machine's own disk | one copy per project |
+## Running the training on Colab
 
-In `store` mode a missing dataset stops the run with a message, and it never falls back to a download. A dataset is kept with
-`datastore.keep_copy` only after the owner says so, as a folder or a zip with a `source.md` note (origin, licence, date, a
-checksum per file). A dataset behind a login is downloaded by the person who holds the login; credentials are never stored.
+The notebook runs on a Colab GPU (an L4 was used) and downloads every dataset itself; nothing needs a login.
 
-### The artifacts folder
-
-```
-ResearchArtifacts/face-detection-classification/
-  data/                         only the datasets you chose to keep (store mode), each with a source.md note
-  scratch/                      smoke-NNN runs, notebook-out/, figures/: throwaway, may be deleted
-  exp-NNN/
-    exp.md  findings.md         the question and conclusion; what was learned, for blog posts
-    analysis/                   notebooks run on the results, tables and plots for the write-up
-    run-NNN/
-      config.json env.json git.txt     written once, never changed
-      attempts.jsonl metrics_history.jsonl train.log    only appended to
-      heartbeat.json                   overwritten (latest state)
-      checkpoints/                     rolling: the newest two are kept
-      metrics.json DONE                written when the run ends
-      record.md                        written afterwards, from the results
-      figures/ predictions/ stdout.log optional: made only by your own code or notebooks
+```bash
+colab new -s fdc-run --gpu L4
+colab exec -s fdc-run --env PROJECT=face-detection-classification --env REPO_URL=https://github.com/ekmungi/face-detection-classification -f clone.py
+colab exec -s fdc-run --env MODE=full --env EXP=exp-001 --env RUN_ID=run-001 -f tools/colab_launch.py
+colab exec -s fdc-run --env EXP=exp-001 --env RUN_ID=run-001 -f tools/colab_status.py
 ```
 
-`exp-NNN` and `run-NNN` numbers are never reused. A resume keeps its run id; a new attempt gets a new one. Smoke tests live in
-`scratch/smoke-NNN`. `paths.py` is the only place that knows where the artifacts folder is: `ARTIFACT_ROOT` if set, otherwise
-the Drive folder on Colab, otherwise `~/ResearchArtifacts/face-detection-classification` here.
+`MODE=smoke` runs every cell on tiny subsets in about fifteen minutes; `MODE=full` is the real run (about two
+hours). Each training plans its epochs from the speed it measures, so it finishes within its time budget.
 
-## The five-stage development pipeline
+## Using the models on a laptop
 
-| Stage | What | Files | Gate before moving on |
-|---|---|---|---|
-| 1 | Helper scripts | `data.py`, `augment.py`, `models.py`, `runlib.py`, `paths.py` | `pytest` passes |
-| 2 | Small runs of each helper | `notebooks/01_helpers.ipynb` | The pictures look right and the checks print PASS |
-| 3 | The training loop, written once | `trainer.py`, `callbacks.py` | The notebook calls `trainer.fit`; nothing is copied |
-| 4 | A few epochs with logic checks | `notebooks/02_pipeline.ipynb`, `checks.py` | Restart and Run All, every check prints PASS |
-| 5 | Deploy from the script | `train.py` | 200-step smoke test, checkpoint and resume, parity with the notebook |
+The run writes `models/` with `detector.onnx`, `expression.onnx`, `embedder.onnx`, the PyTorch checkpoints and
+`model_card.json` (thresholds, metrics, datasets, limitations).
 
-## Run it
-
-On this computer (CPU, small settings):
-
-```
-uv run --extra local pytest
-uv run --extra local python tools/run_notebook_local.py notebooks/02_pipeline.ipynb
+```bash
+uv sync --extra export
+uv run facekit enroll --models C:\Users\<you>\models --people C:\Users\<you>\people --gallery C:\Users\<you>\gallery.npz
+uv run facekit scan --models C:\Users\<you>\models --photos C:\Users\<you>\Pictures --out results.jsonl --gallery C:\Users\<you>\gallery.npz
 ```
 
-On Colab: push the code first, because the machine clones what is on GitHub. Then open `notebooks/02_pipeline.ipynb` in VS Code,
-choose Select Kernel, Colab, New Colab Server, GPU, T4 (never TPU), and run the first code cell. It clones this repository into
-`/content/face-detection-classification` and mounts Drive for the artifacts; approve the Drive prompt within two minutes. A script run:
+`people` holds one folder per person (the folder name is the name) with a few clear photos each. The identity
+threshold in the model card was calibrated on synthetic faces only: check it on your own enrolled photos and pass
+`--threshold` to `enroll` when it needs changing. The gallery holds biometric data about real people, so keep it on
+your computer.
 
-```
-python train.py --spec specs/exp-001_first-experiment.toml --exp exp-001 --run-id run-001
-python train.py --exp scratch --run-id smoke-001 --max-steps 200
+```python
+from facekit.pipeline import FaceAnalyzer
+from facekit.prepare import read_rgb
+
+analyzer = FaceAnalyzer.from_model_dir("models", gallery="gallery.npz")
+for face in analyzer.analyze(read_rgb("photo.jpg")):
+    print(face.as_dict())   # box, landmarks, expression and its probabilities, identity and similarity
 ```
 
-A run that loads a pretrained model and trains nothing uses `python run_eval.py --spec specs/exp-002_<slug>.toml --exp exp-002 --run-id run-001` instead; its log is `run_eval.log` and it writes `metrics.json` and `DONE` like a training run.
+## Tests
+
+```bash
+uv sync --extra local
+uv run pytest
+```
+
+The tests run offline on a CPU and build every fixture in code, so no face image is needed.

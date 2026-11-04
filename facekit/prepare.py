@@ -165,14 +165,25 @@ def build_emonet_array(paths: list[Path], selection: list[tuple[int, int, str]],
 # --- WIDER FACE validation -------------------------------------------------------------------------------------
 
 
+def wider_boxes_xyxy(cell) -> np.ndarray:
+    """Converts the parquet's box cell to xyxy: either {"x": [...], "y": [...], "w": [...], "h": [...]} or rows of x y w h."""
+    if isinstance(cell, dict):
+        columns = [np.asarray(cell.get(k) or [], dtype=np.float32) for k in ("x", "y", "w", "h")]
+        boxes = np.stack(columns, axis=1) if len(columns[0]) else np.zeros((0, 4), dtype=np.float32)
+    else:
+        boxes = np.asarray(cell or [], dtype=np.float32).reshape(-1, 4)
+    boxes = boxes.copy()
+    boxes[:, 2:] += boxes[:, :2]
+    return boxes
+
+
 def wider_val_records(parquet: Path, max_items: int | None = None) -> Iterator[dict]:
     """Yields validation images with ground truth: {"path", "image" RGB, "boxes" xyxy, "keep": {easy, medium, hard}}."""
     columns = ["image", "image_path", "bboxes", "easy_keep_indices", "medium_keep_indices", "hard_keep_indices"]
     for n, row in enumerate(iter_parquet([parquet], columns, batch_size=16)):
         if max_items and n >= max_items:
             return
-        boxes = np.asarray(row["bboxes"] or [], dtype=np.float32).reshape(-1, 4)
-        boxes[:, 2:] += boxes[:, :2]
+        boxes = wider_boxes_xyxy(row["bboxes"])
         yield {
             "path": row["image_path"],
             "image": decode_rgb(image_bytes(row["image"])),
