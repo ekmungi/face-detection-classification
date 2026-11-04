@@ -1,13 +1,29 @@
 [project]
 name = "face-detection-classification"
 version = "0.1.0"
-description = "A small MNIST project that exercises the Jeeves Colab research workflow end to end."
-requires-python = ">=3.12"
-dependencies = []
+description = "Face detection, expression classification and face identification: a production-minded pipeline trained on Colab."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "pillow>=10",
+    "torch>=2.3",
+    "torchvision>=0.18",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8",
+]
 
 [project.optional-dependencies]
-# Needed only on this computer, for the local notebook loop. Colab already has torch and Jupyter installed.
-local = ["torch", "torchvision", "matplotlib", "ipykernel", "jupyterlab", "nbclient", "nbformat", "pytest"]
+# ONNX export and CPU inference without PyTorch.
+export = ["onnx>=1.16", "onnxruntime>=1.18"]
+# Needed only on this computer, for the tests and the local notebook loop. Colab already has torch and Jupyter installed.
+local = ["onnx>=1.16", "onnxruntime>=1.18", "ipykernel", "nbclient", "nbformat", "pytest", "papermill"]
+
+[project.scripts]
+facekit = "facekit.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["facekit*"]
 
 [tool.pytest.ini_options]
 pythonpath = [".", "tests"]
