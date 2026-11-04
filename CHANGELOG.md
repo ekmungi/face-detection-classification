@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.8 - 2026-11-04
+
+- The notebook shows the pipeline figure from the PNG's address on GitHub instead of the relative path
+  `../docs/figures/pipeline_flow.png`. The relative path resolves on GitHub, in a checkout opened in VS Code, and in
+  Colab when Colab opens the notebook from GitHub, because Colab rewrites it to a GitHub address. A copy opened from
+  Google Drive or uploaded, such as the executed copy an unattended run saves in its run folder, has no repository to
+  resolve it against. The full address works in all of these whenever the computer is online. The README's sentence
+  that Colab shows only the figure's description was wrong and is gone.
+- A test finds every picture a markdown cell shows, whether as a markdown image, a reference-style image or an HTML
+  `<img>` tag, and fails on any that is embedded in the cell or not shown from a full https address.
+
 ## 0.2.7 - 2026-11-04
 
 - The synced-folder guard test builds its OneDrive, Google Drive and Dropbox folders under pytest's `tmp_path`
