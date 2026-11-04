@@ -61,8 +61,17 @@ def to_float(images: torch.Tensor) -> torch.Tensor:
 
 
 def augment_batch(images: torch.Tensor, cfg: AugmentConfig, generator: torch.Generator) -> torch.Tensor:
-    """Returns an augmented float batch in [0, 1] from a uint8 or float batch [B, 3, H, W] on any device."""
-    x = to_float(images) if images.dtype == torch.uint8 else images.clone()
+    """Returns an augmented float32 batch in [0, 1] from a uint8 or float batch [B, 3, H, W] on any device.
+
+    Runs with autocast switched off: under mixed precision the blur's convolution would return bfloat16, which cannot
+    be written back into the float32 batch.
+    """
+    with torch.autocast(device_type=images.device.type, enabled=False):
+        return _augment(images, cfg, generator)
+
+
+def _augment(images: torch.Tensor, cfg: AugmentConfig, generator: torch.Generator) -> torch.Tensor:
+    x = to_float(images) if images.dtype == torch.uint8 else images.float().clone()
     n, device = x.shape[0], x.device
     # Geometry: one affine warp per image (scale, rotation, shift, flip).
     scale = _uniform(n, cfg.scale[0], cfg.scale[1], generator, device)

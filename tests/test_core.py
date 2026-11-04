@@ -206,3 +206,10 @@ def test_augment_keeps_shape_and_range(cfg):
     out = augment_batch(x, cfg, torch.Generator().manual_seed(0))
     assert out.shape == (6, 3, 32, 32) and out.dtype == torch.float32
     assert float(out.min()) >= 0.0 and float(out.max()) <= 1.0
+
+
+def test_augment_under_autocast_returns_float32_with_blur():
+    x = torch.randint(0, 255, (8, 3, 32, 32), dtype=torch.uint8)
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        out = augment_batch(x, IDENTITY_AUG, torch.Generator().manual_seed(0))
+    assert out.dtype == torch.float32

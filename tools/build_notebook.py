@@ -526,6 +526,8 @@ while id_proc is not None and id_proc.poll() is None:
         print("".join(ID_LOG.read_text().splitlines(True)[-2:]))
 print("identity process finished" + (f" with exit code {id_proc.returncode}" if id_proc else ""))
 print("".join(ID_LOG.read_text().splitlines(True)[-8:]))
+if not (ID_RUN / "metrics.json").exists():
+    raise RuntimeError("identity training did not finish; the end of its log is printed above (" + str(ID_LOG) + ")")
 id_plan = json.loads((ID_RUN / "plan.json").read_text()); id_metrics = json.loads((ID_RUN / "metrics.json").read_text())
 print("plan:", id_plan); print("result:", id_metrics)
 plot_history(engine.load_history(ID_RUN), ["train_loss_last", "val_auc", "val_tar@far=0.001"], "Identity training", "identity_curves")
