@@ -1,7 +1,10 @@
-"""Expression classifier: an ImageNet-pretrained backbone fine-tuned on aligned face crops, plus the EmoNet-Face label mapping.
+"""Classifies facial expressions with a fine-tuned ImageNet backbone and maps EmoNet-Face labels to eight classes.
 
-The network takes RGB values in [0, 1] and normalises them itself, so the ONNX export needs no preprocessing beyond
-alignment and scaling to [0, 1].
+The network is an ImageNet-pretrained backbone fine-tuned on aligned face crops. It takes RGB values between 0 and 1
+and normalises them itself, so the ONNX export (a file format for sharing trained models) needs no preprocessing
+beyond alignment and scaling to the range 0 to 1.
+
+The module also turns the two kinds of EmoNet-Face annotation, Binary and HQ, into one of the eight expression classes.
 """
 from __future__ import annotations
 
@@ -13,9 +16,11 @@ import torch.nn.functional as F
 import torchvision
 from torch import nn
 
+# The eight expression classes. The position of a name in this tuple is the class index used everywhere else.
 CLASSES: tuple[str, ...] = ("neutral", "happy", "sad", "surprise", "fear", "disgust", "anger", "contempt")
 
-# EmoNet-Face category names (the part after "Group|" in the HQ set) mapped to the eight classes. The project notes record why.
+# Maps each EmoNet-Face category name to one of the eight classes. The names are the part after "Group|" in the HQ
+# set. The reasons for the mapping are recorded in the project notes.
 EMONET_TO_CLASS: dict[str, str] = {
     "Amusement": "happy",
     "Elation": "happy",
@@ -33,22 +38,25 @@ EMONET_TO_CLASS: dict[str, str] = {
     "Contemplation": "neutral",
 }
 
+# The per-channel mean and standard deviation of the ImageNet training images, in RGB order. The pretrained backbones
+# expect their input to be normalised with these values.
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 def _short_name(category: str) -> str:
-    """Strips the group prefix that the HQ set uses ("Negative High-Energy Emotions|Anger" -> "Anger")."""
+    """Strips the group prefix that the HQ set uses, so "Negative High-Energy Emotions|Anger" becomes "Anger"."""
     return category.split("|")[-1].strip()
 
 
 def emonet_binary_target(label_text: str) -> tuple[str | None, bool]:
     """Reads one EmoNet-Face Binary label and returns (target category, confirmed).
 
-    The label is a list of {annotator: {category: bool}} entries. The target is the category rated most often (the
-    others are control questions); it is confirmed when a strict majority of its ratings are True. A tie between
-    categories gives (None, False).
+    The label is a list of {annotator: {category: bool}} entries. The target is the category that was rated most
+    often, and the other categories are control questions. It is confirmed when a strict majority of its ratings are
+    True. A tie between categories gives (None, False).
     """
+    # Collect every true-or-false rating for each category.
     entries = ast.literal_eval(label_text) if isinstance(label_text, str) else label_text
     votes: dict[str, list[bool]] = {}
     for entry in entries:
@@ -57,6 +65,8 @@ def emonet_binary_target(label_text: str) -> tuple[str | None, bool]:
                 votes.setdefault(_short_name(category), []).append(bool(present))
     if not votes:
         return None, False
+
+    # The category with the most ratings is the target. Two categories with the same count make the target unclear.
     counts = Counter({category: len(v) for category, v in votes.items()}).most_common()
     if len(counts) > 1 and counts[0][1] == counts[1][1]:
         return None, False
@@ -76,10 +86,12 @@ def emonet_binary_class(label_text: str) -> int | None:
 def emonet_hq_class(label_text: str, min_intensity: float = 3.0, neutral_max: float = 1.0) -> int | None:
     """Turns EmoNet-Face HQ expert intensity ratings (0 to 7) into one class index, or None when ambiguous.
 
-    For each class the score is the highest mean rating among its member categories, averaged over annotators. The
-    image gets the top non-neutral class when that score is at least `min_intensity` and is clearly above the
-    second (by at least 1.0); it gets "neutral" when every non-neutral class scores at most `neutral_max`.
+    For each class, the score is the highest mean rating among the categories that belong to it. The mean is taken
+    over the annotators. The image gets the strongest non-neutral class when that score is at least `min_intensity`,
+    is clearly above the second strongest, by at least 1.0, and is not beaten by a category outside the eight classes.
+    It gets "neutral" when every non-neutral category scores at most `neutral_max`, and None in all other cases.
     """
+    # Add up each annotator's rating for every category, then divide by the number of annotators to get the means.
     entries = ast.literal_eval(label_text) if isinstance(label_text, str) else label_text
     sums: dict[str, float] = {}
     count = 0
@@ -92,6 +104,8 @@ def emonet_hq_class(label_text: str, min_intensity: float = 3.0, neutral_max: fl
     if count == 0:
         return None
     means = {name: total / count for name, total in sums.items()}
+
+    # Give each class the highest mean among its categories, and rank the non-neutral classes by that score.
     scores: dict[str, float] = {}
     for category, cls in EMONET_TO_CLASS.items():
         if category in means:
@@ -99,12 +113,19 @@ def emonet_hq_class(label_text: str, min_intensity: float = 3.0, neutral_max: fl
     emotional = sorted(((v, k) for k, v in scores.items() if k != "neutral"), reverse=True)
     if not emotional:
         return None
+
+    # The highest mean rating of any category that does not stand for neutral, including categories that the eight
+    # classes do not cover. When it is low, no emotion of any kind is clearly present, so the image is neutral.
     neutral_proxies = {c for c, cls in EMONET_TO_CLASS.items() if cls == "neutral"}
     strongest_any = max((v for name, v in means.items() if name not in neutral_proxies), default=0.0)
     if strongest_any <= neutral_max:
-        return CLASSES.index("neutral")       # no emotion of any kind, mapped or not, is clearly present
+        return CLASSES.index("neutral")
+
+    # The dominant emotion is one that the eight classes do not cover, so the image is not used.
     if strongest_any > emotional[0][0]:
-        return None                           # the dominant emotion is one the eight classes do not cover
+        return None
+
+    # Accept the top class only when it is strong enough and clearly ahead of the second class.
     second = emotional[1][0] if len(emotional) > 1 else 0.0
     if emotional[0][0] >= min_intensity and emotional[0][0] - second >= 1.0:
         return CLASSES.index(emotional[0][1])
@@ -115,18 +136,22 @@ class ExpressionNet(nn.Module):
     """An ImageNet backbone with a new classification head.
 
     Args:
-        num_classes: number of expression classes.
-        backbone: "convnext_tiny" (default), "resnet50" or "resnet18".
-        pretrained: load torchvision ImageNet-1k weights (not trained on faces).
-        input_size: side of the square input the backbone sees; other sizes are resized inside forward.
-        dropout: dropout before the final layer.
+        num_classes: The number of expression classes.
+        backbone: "convnext_tiny" (the default), "resnet50" or "resnet18".
+        pretrained: Whether to load the torchvision ImageNet-1k weights, which were not trained on faces.
+        input_size: The side of the square input that the backbone sees. Other sizes are resized inside `forward`.
+        dropout: The dropout probability applied before the final layer.
     """
 
     def __init__(self, num_classes: int = len(CLASSES), backbone: str = "convnext_tiny", pretrained: bool = True,
                  input_size: int = 224, dropout: float = 0.2):
+        """Builds the chosen backbone and replaces its last layer. Raises ValueError for an unknown backbone name."""
         super().__init__()
         self.input_size = input_size
         self.backbone_name = backbone
+
+        # Load the backbone and swap its last layer for dropout followed by a new linear layer with one output per
+        # expression class.
         if backbone == "convnext_tiny":
             weights = torchvision.models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1 if pretrained else None
             net = torchvision.models.convnext_tiny(weights=weights)
@@ -140,11 +165,14 @@ class ExpressionNet(nn.Module):
         else:
             raise ValueError(f"unknown backbone {backbone!r}")
         self.net = net
+
+        # The normalisation constants are stored on the model, so that they move with it between devices. They are
+        # not saved in checkpoints because they never change.
         self.register_buffer("mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1), persistent=False)
         self.register_buffer("std", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1), persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Returns logits [B, num_classes] for RGB input in [0, 1] of shape [B, 3, H, W]."""
+        """Returns logits [B, num_classes], the raw class scores, for RGB input [B, 3, H, W] with values from 0 to 1."""
         if x.shape[-1] != self.input_size or x.shape[-2] != self.input_size:
             x = F.interpolate(x, size=(self.input_size, self.input_size), mode="bilinear", align_corners=False)
         return self.net((x - self.mean) / self.std)

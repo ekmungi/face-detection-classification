@@ -1,4 +1,8 @@
-"""Builds notebooks/03_end_to_end.ipynb from the cells below, so the notebook is reviewed as plain Python.
+"""Builds the notebook notebooks/03_end_to_end.ipynb from the cells written in this file.
+
+The text and code of every notebook cell are written below as Python strings, so that the notebook can be reviewed as
+plain Python and not as notebook JSON. Each call to md() adds a markdown cell and each call to code() adds a code
+cell. The build() function at the end turns the collected cells into the notebook file.
 
 Run: python tools/build_notebook.py
 """
@@ -6,17 +10,30 @@ from pathlib import Path
 
 import nbformat as nbf
 
+# The cells in notebook order. Each entry holds the cell type, the cell text, and the attachments of a markdown cell or
+# the tags of a code cell.
 CELLS: list[tuple[str, str]] = []
 
 
 def md(text, attachments=None):
+    """Adds a markdown cell to the notebook.
+
+    Newline characters at the start and the end of the text are removed. The attachments are the images that the text
+    refers to, as a dict. They default to none.
+    """
     CELLS.append(("markdown", text.strip("\n"), attachments or {}))
 
 
 def code(text, tags=None):
+    """Adds a code cell to the notebook.
+
+    Newline characters at the start and the end of the text are removed. The tags are a list of cell tags, such as the
+    "parameters" tag that papermill uses to find the cell whose values it replaces. They default to none.
+    """
     CELLS.append(("code", text.strip("\n"), tags or []))
 
 
+# The cells follow in the order in which they appear in the notebook.
 md("""
 # Face detection, expression and identity: trained end to end on Colab
 
@@ -1534,9 +1551,14 @@ print("saved:"); [print(f"  {p.relative_to(RUN)}  {p.stat().st_size / 1e6:.1f} M
 
 
 def build(path: Path) -> None:
+    """Writes the notebook made of all the collected cells to the file at path, creating its folder when needed."""
     nb = nbf.v4.new_notebook()
+
+    # The notebook asks for a Python 3 kernel and, on Colab, for a GPU.
     nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
     nb.metadata["accelerator"] = "GPU"
+
+    # Turn each collected cell into a notebook cell, and attach its images or tags.
     for cell in CELLS:
         if cell[0] == "markdown":
             markdown = nbf.v4.new_markdown_cell(cell[1])
@@ -1548,11 +1570,14 @@ def build(path: Path) -> None:
             if cell[2]:
                 c.metadata["tags"] = cell[2]
             nb.cells.append(c)
+
+    # Write the notebook file.
     path.parent.mkdir(parents=True, exist_ok=True)
     nbf.write(nb, str(path))
 
 
 if __name__ == "__main__":
+    # The notebook is written to the notebooks folder at the top of the repository.
     out = Path(__file__).resolve().parent.parent / "notebooks" / "03_end_to_end.ipynb"
     build(out)
     print("wrote", out, len(CELLS), "cells")

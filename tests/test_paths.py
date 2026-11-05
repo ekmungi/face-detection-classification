@@ -1,4 +1,8 @@
-"""Tests for paths.py: where the artifacts folder is, how the synced Drive folder is found, and the folder naming rules."""
+"""Tests for paths.py, which decides where run artifacts and work data are stored.
+
+The tests cover where the artifacts folder and the work data folder are on Colab and on this computer, how the
+artifacts folder on the mounted Google Drive is found, and the naming rules for experiment folders and run folders.
+"""
 from pathlib import Path
 
 import pytest
@@ -7,6 +11,7 @@ import paths
 
 
 def make_mount(tmp_path, *relative_dirs):
+    """Creates the given folders under tmp_path and returns tmp_path, which then stands in for the Drive mount."""
     for relative in relative_dirs:
         (tmp_path / relative).mkdir(parents=True)
     return tmp_path
@@ -23,20 +28,29 @@ def test_drive_artifacts_are_found_under_mydrive(tmp_path):
 
 def test_drive_artifacts_are_found_in_a_computer_folder_synced_by_the_drive_app(tmp_path):
     mount = make_mount(tmp_path, f"Othercomputers/MY-PC/ResearchArtifacts/{paths.PROJECT}")
-    assert paths.drive_artifacts_dir({}, mount) == mount / "Othercomputers" / "MY-PC" / "ResearchArtifacts" / paths.PROJECT
+    assert (
+        paths.drive_artifacts_dir({}, mount)
+        == mount / "Othercomputers" / "MY-PC" / "ResearchArtifacts" / paths.PROJECT
+    )
 
 
 def test_a_synced_computer_folder_wins_over_mydrive_when_both_exist(tmp_path):
     mount = make_mount(tmp_path, f"MyDrive/ResearchArtifacts/{paths.PROJECT}",
                        f"Othercomputers/MY-PC/ResearchArtifacts/{paths.PROJECT}")
-    assert paths.drive_artifacts_dir({}, mount) == mount / "Othercomputers" / "MY-PC" / "ResearchArtifacts" / paths.PROJECT
+    assert (
+        paths.drive_artifacts_dir({}, mount)
+        == mount / "Othercomputers" / "MY-PC" / "ResearchArtifacts" / paths.PROJECT
+    )
 
 
 def test_with_several_synced_computers_the_first_by_name_wins(tmp_path):
     mount = make_mount(tmp_path, f"Othercomputers/ZED/ResearchArtifacts/{paths.PROJECT}",
                        f"Othercomputers/ALPHA/ResearchArtifacts/{paths.PROJECT}",
                        f"MyDrive/ResearchArtifacts/{paths.PROJECT}")
-    assert paths.drive_artifacts_dir({}, mount) == mount / "Othercomputers" / "ALPHA" / "ResearchArtifacts" / paths.PROJECT
+    assert (
+        paths.drive_artifacts_dir({}, mount)
+        == mount / "Othercomputers" / "ALPHA" / "ResearchArtifacts" / paths.PROJECT
+    )
 
 
 def test_the_drive_environment_variable_beats_both_drive_folders(tmp_path):
@@ -48,7 +62,10 @@ def test_the_drive_environment_variable_beats_both_drive_folders(tmp_path):
 def test_on_colab_artifacts_follow_the_synced_computer_folder_when_both_exist(tmp_path):
     mount = make_mount(tmp_path, f"MyDrive/ResearchArtifacts/{paths.PROJECT}",
                        f"Othercomputers/MY-PC/ResearchArtifacts/{paths.PROJECT}")
-    assert paths.artifact_root({}, on_colab=True, mount=mount) == mount / "Othercomputers" / "MY-PC" / "ResearchArtifacts" / paths.PROJECT
+    assert (
+        paths.artifact_root({}, on_colab=True, mount=mount)
+        == mount / "Othercomputers" / "MY-PC" / "ResearchArtifacts" / paths.PROJECT
+    )
 
 
 def test_the_drive_environment_variable_overrides_the_search(tmp_path):
@@ -61,7 +78,10 @@ def test_drive_artifacts_are_none_when_nothing_matches(tmp_path):
 
 def test_on_colab_with_the_folder_synced_artifacts_are_there(tmp_path):
     mount = make_mount(tmp_path, f"Othercomputers/MY-PC/ResearchArtifacts/{paths.PROJECT}")
-    assert paths.artifact_root({}, on_colab=True, mount=mount) == mount / "Othercomputers" / "MY-PC" / "ResearchArtifacts" / paths.PROJECT
+    assert (
+        paths.artifact_root({}, on_colab=True, mount=mount)
+        == mount / "Othercomputers" / "MY-PC" / "ResearchArtifacts" / paths.PROJECT
+    )
 
 
 def test_on_colab_without_the_folder_the_machine_disk_is_used(tmp_path):
@@ -110,7 +130,10 @@ def test_the_work_data_folder_is_the_machine_disk_on_colab():
 
 
 def test_the_work_data_folder_on_this_computer_is_a_cache_outside_the_artifacts(tmp_path):
-    assert paths.work_data_dir({}, on_colab=False, home=tmp_path) == tmp_path / ".cache" / "research-data" / paths.PROJECT
+    assert (
+        paths.work_data_dir({}, on_colab=False, home=tmp_path)
+        == tmp_path / ".cache" / "research-data" / paths.PROJECT
+    )
 
 
 def test_the_work_data_environment_variable_wins():

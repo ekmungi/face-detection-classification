@@ -1,7 +1,10 @@
-"""Tests for the end-to-end notebook's bootstrap cell: clone the code on Colab, stop on a Colab machine without a GPU.
+"""Tests for the bootstrap cell of the end-to-end notebook, which clones the code on Colab.
 
-The cell runs before the project can be imported, so it is plain inline code in tools/build_notebook.py. These tests run its
-source with stand-ins for the three calls that touch the machine: os.path.isdir, shutil.which and subprocess.run.
+The cell also stops at once on a Colab machine without a GPU, and it does nothing on this computer.
+
+The cell runs before the project can be imported, so it is plain inline code in tools/build_notebook.py. These tests
+run its source with stand-ins for the three calls that touch the machine: os.path.isdir, shutil.which and
+subprocess.run.
 """
 import importlib.util
 import json
@@ -15,12 +18,17 @@ import pytest
 pytest.importorskip("nbformat")
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# The text that the bootstrap cell starts with, which is how the tests find that cell among all the code cells.
 MARKER = "# Bootstrap"
+
+# The folder where the notebook clones the code on Colab, and the address it clones from.
 CLONE = "/content/face-detection-classification"
 REPO_URL = "https://github.com/ekmungi/face-detection-classification"
 
 
 def builder():
+    """Loads tools/build_notebook.py as a module and returns it, so that the tests can read the notebook cells."""
     spec = importlib.util.spec_from_file_location("build_notebook", ROOT / "tools" / "build_notebook.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -28,6 +36,7 @@ def builder():
 
 
 def bootstrap_source():
+    """Returns the source of the bootstrap cell, and fails unless the notebook has exactly one such cell."""
     cells = [cell for cell in builder().CELLS if cell[0] == "code" and cell[1].startswith(MARKER)]
     assert len(cells) == 1, "the notebook needs exactly one bootstrap cell"
     return cells[0][1]
@@ -39,6 +48,7 @@ def run_bootstrap(monkeypatch, *, on_colab, gpu, cloned):
     real_isdir = os.path.isdir
 
     def isdir(path):
+        """Pretends that /content exists only on Colab and that the clone folder exists only if cloned is true."""
         text = str(path).replace("\\", "/")
         if text == "/content":
             return on_colab
@@ -46,6 +56,7 @@ def run_bootstrap(monkeypatch, *, on_colab, gpu, cloned):
             return cloned
         return real_isdir(path)
 
+    # The three calls below are the only ones that touch the real machine, so replacing them is enough.
     monkeypatch.setattr(os.path, "isdir", isdir)
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/nvidia-smi" if gpu and name == "nvidia-smi" else None)
     monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
@@ -60,6 +71,8 @@ def test_bootstrap_does_nothing_on_the_laptop(monkeypatch):
 def test_bootstrap_stops_on_a_colab_machine_without_a_gpu(monkeypatch):
     with pytest.raises(RuntimeError) as error:
         run_bootstrap(monkeypatch, on_colab=True, gpu=False, cloned=False)
+
+    # The message must name the GPU problem, the accepted GPU types and the fix for the user.
     message = str(error.value)
     assert "GPU" in message and "T4, L4 or A100" in message and "Remove" in message
 
@@ -75,6 +88,8 @@ def test_bootstrap_leaves_an_existing_clone_alone(monkeypatch):
 
 def test_bootstrap_runs_after_the_parameters_and_before_the_setup():
     cells = builder().CELLS
+
+    # Each lookup returns the position of one cell: the parameters cell is found by its tag, the others by their text.
     parameters = next(i for i, cell in enumerate(cells) if cell[0] == "code" and "parameters" in cell[2])
     bootstrap = next(i for i, cell in enumerate(cells) if cell[0] == "code" and cell[1].startswith(MARKER))
     setup = next(i for i, cell in enumerate(cells) if cell[0] == "code" and 'os.environ.get("FACEKIT_REPO"' in cell[1])
@@ -84,6 +99,8 @@ def test_bootstrap_runs_after_the_parameters_and_before_the_setup():
 def test_committed_notebook_matches_the_builder():
     committed = json.loads((ROOT / "notebooks" / "03_end_to_end.ipynb").read_text(encoding="utf-8"))["cells"]
     built = builder().CELLS
+
+    # A notebook file stores a cell's source either as one string or as a list of lines, so both are turned into text.
     as_text = lambda source: source if isinstance(source, str) else "".join(source)  # noqa: E731
     assert [as_text(cell["source"]) for cell in committed] == [cell[1] for cell in built], (
         "notebooks/03_end_to_end.ipynb is out of date: run python tools/build_notebook.py")

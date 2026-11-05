@@ -1,14 +1,17 @@
-"""Where each dataset comes from and under which licence. The project notes record the same table and the reasons for each choice.
+"""Lists where each dataset comes from and under which licence.
 
-Nothing here downloads anything; `facekit.datasets.fetch` does that on the training machine.
+The project notes record the same table and the reasons for each choice. Nothing here downloads anything. The function
+`facekit.datasets.fetch` does that on the training machine.
 """
 from __future__ import annotations
 
 from facekit.datasets import Source
 
+# The base address of the Hugging Face dataset hosting, and the address of the DigiFace-1M files.
 HF = "https://huggingface.co/datasets"
 DIGIFACE = "https://facesyntheticspubwedata.z6.web.core.windows.net/wacv-2023"
 
+# The licence names and licence pages that the sources below refer to.
 WIDER_LICENCE = "CC BY-NC-ND 4.0 (non-commercial research)"
 WIDER_LICENCE_URL = f"{HF}/CUHK-CSE/wider_face"
 DIGIFACE_LICENCE = "Microsoft Research Use of Data Agreement v1.0 (trained models are Results; no commercial offering)"
@@ -16,7 +19,7 @@ DIGIFACE_LICENCE_URL = "https://github.com/microsoft/DigiFace1M/blob/main/LICENS
 EMONET_LICENCE = "CC BY 4.0"
 
 # Detection: WIDER FACE training images, the RetinaFace five-landmark annotations, and the validation set with the
-# official easy, medium and hard face lists.
+# official easy, medium and hard face lists. The sizes of all sources are in bytes.
 WIDER_TRAIN = Source(
     name="wider_train", url=f"{HF}/CUHK-CSE/wider_face/resolve/main/data/WIDER_train.zip",
     filename="WIDER_train.zip", size=1465602149, licence=WIDER_LICENCE, licence_url=WIDER_LICENCE_URL)
@@ -30,7 +33,8 @@ WIDER_VAL = Source(
     name="wider_val", url=f"{HF}/zhouxzh/retinaface_widerface/resolve/main/val/val-00000-of-00001.parquet",
     filename="wider_val.parquet", size=366027354, licence=WIDER_LICENCE, licence_url=WIDER_LICENCE_URL)
 
-# Expression: EmoNet-Face Binary (training, validation and test) and EmoNet-Face HQ (a second test set).
+# Expression: EmoNet-Face Binary (training, validation and test) and EmoNet-Face HQ (a second test set). Each set is
+# split over several files.
 EMONET_BINARY = [
     Source(name=f"emonet_binary_{i}",
            url=f"{HF}/laion/emonet-face-binary/resolve/main/data/train-0000{i}-of-00005.parquet",
@@ -44,7 +48,8 @@ EMONET_HQ = [
     for i in range(7)
 ]
 
-# Identity: DigiFace-1M parts of 2,000 synthetic identities with 72 images each.
+# Identity: DigiFace-1M parts of 2,000 synthetic identities with 72 images each. The keys are the identity ranges of
+# the parts, and the values are the sizes of the part files in bytes.
 DIGIFACE_PART_SIZES = {
     "0-1999": 2938553163,
     "2000-3999": 2936098225,
@@ -72,12 +77,16 @@ LONDON_SMILING = Source(
     size=53522950, licence="CC BY 4.0", licence_url=LONDON_LICENCE_URL)
 
 # ImageNet weights for the detector and expression backbones. torchvision attaches no licence to IMAGENET1K_V1 and
-# says only that weights "may" carry terms from their training data; the code is BSD-3-Clause.
+# says only that weights "may" carry terms from their training data. The torchvision code is BSD-3-Clause.
 IMAGENET_NOTE = "torchvision ImageNet-1k weights (IMAGENET1K_V1): no licence attached; torchvision code BSD-3-Clause"
 
 
 def all_sources(digiface_train_parts: list[str], digiface_test_part: str, emonet_hq_files: int) -> list[Source]:
-    """Returns every Source a full run downloads, for the manifest and the model card."""
+    """Returns every Source that a full run downloads, for the manifest and the model card.
+
+    `digiface_train_parts` and `digiface_test_part` name the DigiFace-1M parts used for training and for the test, and
+    `emonet_hq_files` is the number of EmoNet-Face HQ files to include.
+    """
     return (
         [WIDER_TRAIN, RETINAFACE_LABELS, WIDER_VAL]
         + EMONET_BINARY

@@ -1,4 +1,8 @@
-"""Tests for tools/strip_notebook_outputs.py: committed notebooks must carry no outputs."""
+"""Tests for tools/strip_notebook_outputs.py, which removes cell outputs so that committed notebooks carry none.
+
+A notebook that was run holds the outputs of its cells and their execution counts. The tool removes both, so that the
+notebook can be committed without its results, local paths or account names.
+"""
 import json
 import sys
 from pathlib import Path
@@ -7,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import strip_notebook_outputs as tool  # noqa: E402
 
+# A minimal notebook with one markdown cell and one code cell. The code cell has an execution count and one line of
+# printed output.
 NOTEBOOK = {"cells": [
     {"cell_type": "markdown", "source": ["# title"]},
     {"cell_type": "code", "source": ["print(1)"], "execution_count": 4, "metadata": {},
@@ -15,6 +21,7 @@ NOTEBOOK = {"cells": [
 
 
 def write(tmp_path, data=NOTEBOOK, name="n.ipynb"):
+    """Writes a notebook dictionary as a JSON file in tmp_path and returns the path of the file."""
     path = tmp_path / name
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
@@ -46,6 +53,8 @@ def test_main_rewrites_the_file(tmp_path):
 def test_check_mode_reports_and_changes_nothing(tmp_path, capsys):
     path = write(tmp_path)
     before = path.read_text(encoding="utf-8")
+
+    # In check mode the tool returns the exit code 1 and prints a message, but it leaves the file as it was.
     assert tool.main(["--check", str(path)]) == 1
     assert path.read_text(encoding="utf-8") == before and "has outputs" in capsys.readouterr().out
 

@@ -1,8 +1,10 @@
-"""Tests for the notebook's three modes: smoke, medium and full.
+"""Tests for the three modes of the training notebook: smoke, medium and full.
 
-Medium mode sits between the two: one run on a Colab L4 that gives meaningful results with all eight expressions.
-The cells that need a GPU cannot run here, so these tests run the configuration cell with stand-ins and read the
-source of the other cells.
+Smoke mode is a quick check of the whole pipeline, and full mode is the real training run. Medium mode sits between
+the two: it is one run on a Colab L4 GPU that gives meaningful results with all eight expressions.
+
+The cells that need a GPU cannot run on this computer. These tests therefore run only the configuration cell, with
+stand-ins for the values that the notebook provides, and they read the source text of the other cells.
 """
 import importlib.util
 import json
@@ -11,10 +13,13 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# The budget values that the notebook's parameters cell sets, which medium mode is expected to replace.
 PARAMETERS = {"DET_BUDGET_MIN": 50.0, "ID_BUDGET_MIN": 55.0, "EXPR_BUDGET_MIN": 12.0}
 
 
 def builder():
+    """Loads tools/build_notebook.py as a module and returns it, so that the tests can read the notebook cells."""
     spec = importlib.util.spec_from_file_location("build_notebook", ROOT / "tools" / "build_notebook.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -22,14 +27,17 @@ def builder():
 
 
 def code_cells():
+    """Returns the source text of every code cell in the notebook."""
     return [cell[1] for cell in builder().CELLS if cell[0] == "code"]
 
 
 def markdown_cells():
+    """Returns the text of every markdown cell in the notebook."""
     return [cell[1] for cell in builder().CELLS if cell[0] == "markdown"]
 
 
 def one_cell(marker):
+    """Returns the source of the single code cell that contains marker, and fails unless exactly one cell does."""
     found = [source for source in code_cells() if marker in source]
     assert len(found) == 1, f"expected one code cell with {marker!r}, found {len(found)}"
     return found[0]
@@ -66,6 +74,8 @@ def test_medium_mode_uses_three_thousand_wider_training_photos_and_five_hundred_
 
 def test_medium_mode_trains_to_its_own_time_budgets_and_ignores_the_budget_parameters():
     scope = run_config("medium")
+
+    # A step limit of 0 means no limit, so the length of each training follows its time budget.
     assert (scope["CFG"]["det_max_steps"], scope["CFG"]["expr_max_steps"], scope["CFG"]["id_max_steps"]) == (0, 0, 0)
     assert (scope["DET_BUDGET_MIN"], scope["ID_BUDGET_MIN"], scope["EXPR_BUDGET_MIN"]) == (6.0, 8.0, 3.0)
 
@@ -85,7 +95,14 @@ def test_portraits_without_a_face_are_centre_cropped_in_every_mode_but_full():
 def test_the_setup_cell_stops_on_an_unknown_mode_and_claims_the_run_folder_first():
     source = one_cell('os.environ.get("FACEKIT_REPO"')
     assert 'if MODE not in ("smoke", "medium", "full"):' in source
-    assert source.index("paths.check_run_name_for_mode(MODE, RUN_ID)") < source.index("RUN = paths.run_dir(EXP, RUN_ID)")
+
+    # The run name must be checked against the mode before the run folder path is built.
+    assert (
+        source.index("paths.check_run_name_for_mode(MODE, RUN_ID)")
+        < source.index("RUN = paths.run_dir(EXP, RUN_ID)")
+    )
+
+    # The run folder must be created and claimed for the mode before any figure folder is made inside it.
     made = source.index("RUN.mkdir(parents=True, exist_ok=True)")
     claimed = source.index("runlib.claim_run_mode(RUN, MODE)")
     assert made < claimed < source.index('FIG = RUN / "figures"')
