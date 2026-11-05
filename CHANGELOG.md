@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.9 - 2026-11-05
+
+- Every module, class and function now has a docstring, and every comment is a complete sentence in plain English,
+  with blank lines between the logical steps of long functions. Test functions whose names already say what they
+  check have no docstring. The code itself is unchanged: each file was compared with its earlier version after
+  removing comments and docstrings, and the tests pass as before.
+- The `--help` text of `facekit`, `train.py`, `tools/eval_london.py`, `tools/run_notebook_local.py` and
+  `tools/strip_notebook_outputs.py` comes from these docstrings, so it reads more clearly too.
+- A review of the new comments against the code also corrected older comments that were wrong. For example, the
+  docstring of `emonet_hq_class` left out that a portrait is skipped when a category outside the eight classes scores
+  highest, and the docstring of `raw_outputs` claimed that the ONNX parity check uses it, which no code does.
+
 ## 0.2.8 - 2026-11-04
 
 - The notebook shows the pipeline figure from the PNG's address on GitHub instead of the relative path
